@@ -1,2 +1,6 @@
 build
 limine-binary
+
+# Added by cargo
+
+/target

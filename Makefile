@@ -37,11 +37,15 @@ SRCFILES = $(shell find -L src -type f 2>/dev/null | LC_ALL=C sort)
 CFILES = $(filter %.c,$(SRCFILES))
 ASMFILES = $(filter %.asm,$(SRCFILES))
 OBJFILES = $(addprefix build/, $(CFILES:.c=.c.o) $(ASMFILES:.asm=.asm.o))
+RUST_LIB = target/x86_64-unknown-none/debug/libunnamed.a
 
 all: dependencies image
 
-build/unnamed.elf: $(OBJFILES)
+build/unnamed.elf: $(OBJFILES) $(RUST_LIB)
 	$(LD) $(LDFLAGS) $^ -o $@
+
+$(RUST_LIB):
+	cargo build --target x86_64-unknown-none
 
 build/%.c.o: %.c
 	mkdir -p $(@D)

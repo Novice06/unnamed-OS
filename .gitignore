@@ -1,5 +1,6 @@
 build
 limine-binary
+export.sh
 
 # Added by cargo
 

@@ -21,7 +21,8 @@ CFLAGS = \
     -mno-sse \
     -mno-sse2 \
     -mno-red-zone \
-    -mcmodel=kernel
+    -mcmodel=kernel \
+	-I src
 
 LDFLAGS = \
     -m elf_x86_64 \
@@ -36,16 +37,17 @@ ASMFLAGS = -f elf64 -Wall
 SRCFILES = $(shell find -L src -type f 2>/dev/null | LC_ALL=C sort)
 CFILES = $(filter %.c,$(SRCFILES))
 ASMFILES = $(filter %.asm,$(SRCFILES))
+RUSTFILES = $(filter %.rs,$(SRCFILES))
 OBJFILES = $(addprefix build/, $(CFILES:.c=.c.o) $(ASMFILES:.asm=.asm.o))
-RUST_LIB = target/x86_64-unknown-none/debug/libunnamed.a
+RUST_LIB = target/x86_64-unknown-none/release/libunnamed.a
 
 all: dependencies image
 
 build/unnamed.elf: $(OBJFILES) $(RUST_LIB)
 	$(LD) $(LDFLAGS) $^ -o $@
 
-$(RUST_LIB):
-	cargo build --target x86_64-unknown-none
+$(RUST_LIB): $(RUSTFILES)
+	cargo build --release --target x86_64-unknown-none
 
 build/%.c.o: %.c
 	mkdir -p $(@D)
@@ -54,9 +56,6 @@ build/%.c.o: %.c
 build/%.asm.o: %.asm
 	mkdir -p $(@D)
 	$(ASM) $(ASMFLAGS) $< -o $@
-
-clean:
-	rm -rf build/
 
 dependencies:
 	if [ ! -d "limine-binary" ]; then \
@@ -90,6 +89,11 @@ run: image
 	qemu-system-x86_64 \
     -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE_4M.fd \
     -drive if=pflash,format=raw,file=OVMF_VARS_4M.fd \
-    -drive if=ide,file=build/image.hdd,format=raw
+    -drive if=ide,file=build/image.hdd,format=raw \
+	-serial stdio 2>&1
+
+clean:
+	rm -rf build/
+	cargo clean
 
 .PHONY: all clean run image dependencies

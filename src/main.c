@@ -1,7 +1,10 @@
-
-#include "limine.h"
 #include <stdint.h>
 #include <stddef.h>
+
+#include <cpu/gdt.h>
+
+#include "limine.h"
+#include "serial.h"
 
 __attribute__((used, section(".limine_requests")))
 static volatile uint64_t limine_base_revision[] = LIMINE_BASE_REVISION(6);
@@ -91,8 +94,12 @@ void kmain()
     if(framebuffer_request.response == NULL || framebuffer_request.response->framebuffer_count < 1)
         hcf();
 
+    GDT_init();
+
     // Fetch the first framebuffer.
     struct limine_framebuffer *framebuffer = framebuffer_request.response->framebuffers[0];
+
+    SERIAL_printf("framebuffer at 0x%x", framebuffer);
 
     extern void draw_framebuffer(uint8_t* addr, int width, int heigh, int pitch);
     draw_framebuffer(

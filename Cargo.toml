@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 autobins = false
 
+[[bin]]
+test = false
+bench = false
+
 [lib]
 path = "src/main.rs"
 crate-type = ["staticlib"]

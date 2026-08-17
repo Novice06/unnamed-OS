@@ -114,8 +114,7 @@ void printf(PutC putc, const char* fmt, va_list args)
 
                     case 's':   
                                 char* str = va_arg(args, const char*);
-                                for(; *str != '\0'; str++)
-                                    putc(str);
+                                for(; *str != '\0'; str++) putc(*str);
                                 break;
 
                     case '%':   putc('%');

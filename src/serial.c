@@ -5,17 +5,6 @@
 
 #define PORT 0x3f8          // COM1
 
-void SERIAL_init()
-{
-    outb(PORT + 1, 0x00);
-    outb(PORT + 3, 0x80);
-    outb(PORT + 0, 0x03);
-    outb(PORT + 1, 0x00);
-    outb(PORT + 3, 0x03);
-    outb(PORT + 2, 0xC7);
-    outb(PORT + 4, 0x0B);
-}
-
 int is_transmit_empty() {
    return inb(PORT + 5) & 0x20;
 }
@@ -41,4 +30,17 @@ void SERIAL_printf(char* fmt, ...)
     printf(SERIAL_putc, fmt, args);
 
     va_end(args);
+}
+
+void SERIAL_init()
+{
+    outb(PORT + 1, 0x00);
+    outb(PORT + 3, 0x80);
+    outb(PORT + 0, 0x03);
+    outb(PORT + 1, 0x00);
+    outb(PORT + 3, 0x03);
+    outb(PORT + 2, 0xC7);
+    outb(PORT + 4, 0x0B);
+
+    SERIAL_puts("\n\n\n");
 }

@@ -47,3 +47,14 @@ outb:
     mov rsp, rbp
     pop rbp
     ret
+
+global halt
+halt:
+    push rbp
+    mov rbp, rsp
+
+    hlt
+
+    mov rsp, rbp
+    pop rbp
+    ret

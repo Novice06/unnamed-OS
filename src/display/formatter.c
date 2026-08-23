@@ -8,7 +8,7 @@
 #include <stdarg.h>
 #include <stdbool.h>
 
-#include "display.h"
+#include "formatter.h"
 
 #define PRINTF_STATE_NORMAL         0
 #define PRINTF_STATE_LENGTH         1

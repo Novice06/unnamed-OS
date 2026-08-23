@@ -48,6 +48,21 @@ outb:
     pop rbp
     ret
 
+global read_msr
+read_msr:
+    push rbp
+    mov rbp, rsp
+
+    mov ecx, edi
+    rdmsr
+
+    shl rdx, 32
+    or rax, rdx
+
+    mov rsp, rbp
+    pop rbp
+    ret
+
 global halt
 halt:
     push rbp

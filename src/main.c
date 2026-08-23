@@ -4,25 +4,15 @@
 #include <cpu/gdt.h>
 #include <cpu/idt.h>
 #include <cpu/isr.h>
+#include <cpu/apic/lapic.h>
+#include <cpu/apic/io_apic.h>
 
-#include "limine.h"
-#include "serial.h"
-#include "utils.h"
+#include <display/serial.h>
 
-__attribute__((used, section(".limine_requests")))
-static volatile uint64_t limine_base_revision[] = LIMINE_BASE_REVISION(6);
+#include <utils/utils.h>
+#include <utils/limine_requests.h>
 
-__attribute__((used, section(".limine_requests")))
-static volatile struct limine_framebuffer_request framebuffer_request = {
-    .id = LIMINE_FRAMEBUFFER_REQUEST_ID,
-    .revision = 0,
-};
-
-__attribute__((used, section(".limine_requests_start")))
-static volatile uint64_t limine_start_marker = LIMINE_REQUESTS_START_MARKER;
-
-__attribute__((used, section(".limine_requests_end")))
-static volatile uint64_t limine_end_marker = LIMINE_REQUESTS_END_MARKER;
+#include <acpi/acpi.h>
 
 void kmain()
 {
@@ -32,18 +22,30 @@ void kmain()
     if(framebuffer_request.response == NULL || framebuffer_request.response->framebuffer_count < 1)
         hcf();
 
+    if((void*)rsdp_request.response->address == NULL)
+        hcf();
+
+    if((void*)hhdm_request.response->offset == NULL)
+        hcf();
+
     SERIAL_init();
+
+    SERIAL_printf("hhdm offset 0x%lx\n", hhdm_request.response->offset);
 
     GDT_init();
     IDT_init();
     ISR_init();
 
-    int test = 1/0;
+    if(!ACPI_parse(rsdp_request.response->address))
+        SERIAL_printf("cannot parse acpi tables\n");
+
+    LAPIC_init();
+    // IOAPIC_init();
 
     // Fetch the first framebuffer.
     struct limine_framebuffer *framebuffer = framebuffer_request.response->framebuffers[0];
 
-    SERIAL_printf("framebuffer at 0x%x", framebuffer);
+    SERIAL_printf("framebuffer at 0x%lx\n", framebuffer);
 
     extern void draw_framebuffer(uint8_t* addr, int width, int heigh, int pitch);
     draw_framebuffer(

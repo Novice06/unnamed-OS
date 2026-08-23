@@ -1,7 +1,7 @@
 #include <stdarg.h>
 
-#include "utils.h"
-#include "display.h"
+#include <utils/utils.h>
+#include "formatter.h"
 
 #define PORT 0x3f8          // COM1
 

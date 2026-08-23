@@ -20,7 +20,7 @@ typedef struct
 Idt_gate IDT[256];
 Idt_descriptor IDT_desc = {
     .limit = sizeof(IDT) -1,
-    .base = IDT,
+    .base = (uint64_t)IDT,
 };
 
 void IDT_setGate(int interrupt, void* handler, uint8_t attribute)

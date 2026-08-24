@@ -10,6 +10,8 @@ fn panic(_info: &PanicInfo) -> ! {
     };
 }
 
+pub mod mm;
+
 unsafe extern "C" {
     fn hcf() -> !;
 }

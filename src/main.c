@@ -28,6 +28,9 @@ void kmain()
     if((void*)hhdm_request.response->offset == NULL)
         hcf();
 
+    if((void*)memmap_request.response->entries <= 0)
+        hcf();
+
     SERIAL_init();
 
     SERIAL_printf("hhdm offset 0x%lx\n", hhdm_request.response->offset);
@@ -39,7 +42,13 @@ void kmain()
     if(!ACPI_parse(rsdp_request.response->address))
         SERIAL_printf("cannot parse acpi tables\n");
 
-    LAPIC_init();
+    for(int i = 0; i < memmap_request.response->entry_count; i++)
+    {
+        struct limine_memmap_entry* entry = memmap_request.response->entries[i];
+        SERIAL_printf("memory map entry base: 0x%lx, length: 0x%lx, type: 0x%lx\n", entry->base, entry->length, entry->type);
+    }
+
+    // LAPIC_init();
     // IOAPIC_init();
 
     // Fetch the first framebuffer.

@@ -1,19 +1,30 @@
 #![no_std]
 #![no_main]
 
+pub mod mm;
+pub mod spinlock;
+pub mod display;
+
 use core::panic::PanicInfo;
 /// This function is called on panic.
 #[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
+fn panic(info: &PanicInfo) -> ! {
     unsafe {
+        println!("RUST KERNEL PANIC");
+
+        if let Some(location) = info.location() {
+            println!("Location: {}:{}:{}", location.file(), location.line(), location.column());
+        }
+
+        println!("Message: {}", info.message());
+
         hcf();
     };
 }
 
-pub mod mm;
-
 unsafe extern "C" {
     fn hcf() -> !;
+    fn SERIAL_putc(c: u8);
 }
 
 #[unsafe(no_mangle)]
@@ -23,6 +34,9 @@ pub extern "C" fn draw_framebuffer(
     height: usize,
     pitch: usize,
 ) {
+
+    println!("hello from rust!, framebuffer at 0x{:x}", address as u64);
+
     let fb_ptr = address as *mut u32;
 
     for y in 0..height {

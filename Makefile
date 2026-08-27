@@ -87,7 +87,8 @@ image: build/unnamed.elf
 
 run: image
 	qemu-system-x86_64 \
-    -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE_4M.fd \
+	-m 128M \
+	-drive if=pflash,format=raw,readonly=on,file=OVMF_CODE_4M.fd \
     -drive if=pflash,format=raw,file=OVMF_VARS_4M.fd \
     -drive if=ide,file=build/image.hdd,format=raw \
 	-serial stdio 2>&1

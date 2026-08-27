@@ -14,6 +14,10 @@
 
 #include <acpi/acpi.h>
 
+#include <mm/rust_interface.h>
+
+static struct limine_memmap_entry contiguous_entries[256];
+
 void kmain()
 {
     if(!LIMINE_BASE_REVISION_SUPPORTED(limine_base_revision))
@@ -28,7 +32,7 @@ void kmain()
     if((void*)hhdm_request.response->offset == NULL)
         hcf();
 
-    if((void*)memmap_request.response->entries <= 0)
+    if((void*)memmap_request.response->entries == NULL)
         hcf();
 
     SERIAL_init();
@@ -39,14 +43,20 @@ void kmain()
     IDT_init();
     ISR_init();
 
+    struct memory_map contiguous = {
+        .rev = memmap_request.response->revision,
+        .count = memmap_request.response->entry_count,
+        .contiguous_entries = contiguous_entries,
+    };
+
+    for(uint64_t i = 0; i < memmap_request.response->entry_count; i++)
+        memcpy(&contiguous_entries[i], memmap_request.response->entries[i], sizeof(struct limine_memmap_entry));
+
+    PHYSMEM_init(contiguous, hhdm_request.response->offset);
+
+
     if(!ACPI_parse(rsdp_request.response->address))
         SERIAL_printf("cannot parse acpi tables\n");
-
-    for(int i = 0; i < memmap_request.response->entry_count; i++)
-    {
-        struct limine_memmap_entry* entry = memmap_request.response->entries[i];
-        SERIAL_printf("memory map entry base: 0x%lx, length: 0x%lx, type: 0x%lx\n", entry->base, entry->length, entry->type);
-    }
 
     // LAPIC_init();
     // IOAPIC_init();
@@ -54,7 +64,7 @@ void kmain()
     // Fetch the first framebuffer.
     struct limine_framebuffer *framebuffer = framebuffer_request.response->framebuffers[0];
 
-    SERIAL_printf("framebuffer at 0x%lx\n", framebuffer);
+    SERIAL_printf("framebuffer at 0x%lx\n", framebuffer->address);
 
     extern void draw_framebuffer(uint8_t* addr, int width, int heigh, int pitch);
     draw_framebuffer(

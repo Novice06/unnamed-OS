@@ -25,6 +25,10 @@ fn panic(info: &PanicInfo) -> ! {
 unsafe extern "C" {
     fn hcf() -> !;
     fn SERIAL_putc(c: u8);
+
+    static kernel_start: core::ffi::c_uchar;
+    static kernel_write_allowed_start: core::ffi::c_uchar;
+    static kernel_end: core::ffi::c_uchar;
 }
 
 #[unsafe(no_mangle)]

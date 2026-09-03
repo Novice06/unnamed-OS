@@ -11,7 +11,8 @@ struct memory_map
 };
 
 
-extern void PHYSMEM_init(
+extern uint64_t MEM_init(
     struct memory_map mem_map,
-    uint64_t limine_hhdm_offset
+    uint64_t limine_hhdm_offset,
+    struct limine_executable_address_response
 );

@@ -206,7 +206,7 @@ impl PhysMemAllocator {
         }
     }
 
-    fn alloc_page(&mut self) -> *mut u8 {
+    pub fn alloc_page(&mut self) -> *mut u8 {
         if let Some(free_list) = self.free_list.as_mut() {
             if self.free_pages <= 0 {return core::ptr::null_mut();}
 
@@ -249,7 +249,7 @@ impl PhysMemAllocator {
         }
     }
 
-    fn free_page(&mut self, addr: *mut u8) {
+    pub fn free_page(&mut self, addr: *mut u8) {
 
         // self.free_list
         // .as_mut()

@@ -17,6 +17,7 @@
 #include <mm/rust_interface.h>
 
 static struct limine_memmap_entry contiguous_entries[256];
+struct memory_map contiguous = {0};
 
 void kmain()
 {
@@ -43,16 +44,16 @@ void kmain()
     IDT_init();
     ISR_init();
 
-    struct memory_map contiguous = {
-        .rev = memmap_request.response->revision,
-        .count = memmap_request.response->entry_count,
-        .contiguous_entries = contiguous_entries,
-    };
+    contiguous.rev = memmap_request.response->revision;
+    contiguous.count = memmap_request.response->entry_count;
+    contiguous.contiguous_entries = contiguous_entries;
 
     for(uint64_t i = 0; i < memmap_request.response->entry_count; i++)
         memcpy(&contiguous_entries[i], memmap_request.response->entries[i], sizeof(struct limine_memmap_entry));
 
-    PHYSMEM_init(contiguous, hhdm_request.response->offset);
+   uint64_t stack_top = MEM_init(contiguous, hhdm_request.response->offset, *executable_request.response);
+
+   SERIAL_printf("new stack at: 0x%lx\n", stack_top);
 
 
     if(!ACPI_parse(rsdp_request.response->address))

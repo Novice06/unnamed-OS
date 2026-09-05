@@ -1,15 +1,14 @@
-use crate::{println, spinlock::SpinLock};
+use crate::{mm::PhyAddr, println, spinlock::SpinLock};
 use super::LimineMemMapEntry;
 
 struct Bitmap {
-    data: *mut u8,
-    length: u32,
+    data: &'static mut [u8]
 }
 unsafe impl Send for Bitmap {}
 unsafe impl Sync for Bitmap {}
 
 impl Bitmap {
-    fn new(mem_map: &[LimineMemMapEntry], limine_hhdm_offset: u64, total_page_number: u32) -> Self {
+    fn from_memory_map(mem_map: &[LimineMemMapEntry], limine_hhdm_offset: u64, total_page_number: u32) -> Self {
 
         let bitmap_length = (total_page_number + 7) / 8;
 
@@ -20,12 +19,17 @@ impl Bitmap {
         .find(|region| region.length >= bitmap_length as u64)
         .expect("there is no way we didnt find any suitable region for the bitmap");
 
-        let mut bitmap = Bitmap { data: (bitmap_region.base + limine_hhdm_offset) as *mut u8, length: bitmap_length };
+        let mut bitmap = Bitmap { 
+            data: unsafe {
+                core::slice::from_raw_parts_mut((bitmap_region.base + limine_hhdm_offset) as *mut u8, bitmap_length as usize)
+            }
+        };
+        
 
         println!("bitmap base: 0x{:x} length {}", bitmap_region.base, bitmap_length);
 
         // initially we mark the whole physical address space as used
-        bitmap.sliced_bitmap_mut().fill(0xFF);
+        bitmap.data.fill(0xFF);
 
         // then first we map free regions
         let available_regions = mem_map
@@ -60,43 +64,28 @@ impl Bitmap {
         bitmap
     }
 
-    fn sliced_bitmap(&self) -> &[u8] {
-        unsafe {
-            core::slice::from_raw_parts_mut(self.data, self.length as usize)
-        }
-    }
-
-    fn sliced_bitmap_mut(&self) -> &mut [u8] {
-        unsafe {
-            core::slice::from_raw_parts_mut(self.data, self.length as usize)
-        }
-    }
-
     fn set(&mut self, index: usize) {
-        let bitmap = self.sliced_bitmap_mut();
 
         let byte = index / 8;
         let bit = index % 8;
 
-        bitmap[byte] |= 1 << bit;
+        self.data[byte] |= 1 << bit;
     }
 
     fn clear(&mut self, index: usize) {
-        let bitmap = self.sliced_bitmap_mut();
 
         let byte = index / 8;
         let bit = index % 8;
 
-        bitmap[byte] &= !(1 << bit);
+        self.data[byte] &= !(1 << bit);
     }
 
     fn is_used(&self, index: usize) -> bool{
-        let bitmap = self.sliced_bitmap();
 
         let byte = index / 8;
         let bit = index % 8;
 
-        bitmap[byte] & (1 << bit) != 0
+        self.data[byte] & (1 << bit) != 0
     }
 
     fn addr_to_index(addr: u64) -> usize {
@@ -206,9 +195,9 @@ impl PhysMemAllocator {
         }
     }
 
-    pub fn alloc_page(&mut self) -> *mut u8 {
+    pub fn alloc_page(&mut self) -> Option<PhyAddr> {
         if let Some(free_list) = self.free_list.as_mut() {
-            if self.free_pages <= 0 {return core::ptr::null_mut();}
+            if self.free_pages <= 0 {return None;}
 
             // let free_list = self.free_list.as_mut().unwrap();
             let bitmap = self.bitmap.as_mut().unwrap();
@@ -225,7 +214,7 @@ impl PhysMemAllocator {
                 self.free_pages -= 1;
 
                 bitmap.set(Bitmap::addr_to_index(addr as u64)); // set this page as used
-                break addr;
+                break Some(PhyAddr(addr as u64));
             }
         } else {
             let free_index = self.bitmap
@@ -242,28 +231,30 @@ impl PhysMemAllocator {
                 self.used_pages += 1;
                 self.free_pages -= 1;
 
-                Bitmap::index_to_addr(index) as *mut u8
+                Some(PhyAddr(Bitmap::index_to_addr(index)))
             } else {
-                core::ptr::null_mut()
+                None
             }
         }
     }
 
-    pub fn free_page(&mut self, addr: *mut u8) {
+    pub fn free_page(&mut self, addr: PhyAddr) {
 
         // self.free_list
         // .as_mut()
         // .unwrap()
         // .put(addr);
 
+        let PhyAddr(addr) = addr;
+
         if let Some(free_list) = self.free_list.as_mut() {
-            free_list.put(addr);
+            free_list.put(addr as *mut u8);
         }
         
         self.bitmap
         .as_mut()
         .unwrap()
-        .clear(Bitmap::addr_to_index(addr as u64));
+        .clear(Bitmap::addr_to_index(addr));
 
         self.free_pages += 1;
         self.used_pages -= 1;
@@ -275,7 +266,7 @@ pub static PHYSICAL_MEMORY_ALLOCATOR: SpinLock<PhysMemAllocator> = SpinLock::new
 pub fn init(memory_size: u32, mem_map_entries: &[LimineMemMapEntry], limine_hhdm_offset: u64) {
     let mut allocator = PHYSICAL_MEMORY_ALLOCATOR.lock();
     allocator.total_pages = (memory_size / 0x1000) as u32;
-    allocator.bitmap = Some(Bitmap::new(mem_map_entries, limine_hhdm_offset,allocator.total_pages));
+    allocator.bitmap = Some(Bitmap::from_memory_map(mem_map_entries, limine_hhdm_offset,allocator.total_pages));
     // allocator.free_list = Some(FreeList::from_bitmap(allocator.bitmap.as_ref().unwrap(), allocator.total_pages));
 
     for index in 0..allocator.total_pages {
@@ -289,14 +280,14 @@ pub fn init(memory_size: u32, mem_map_entries: &[LimineMemMapEntry], limine_hhdm
 
     println!("allocator, total pages {}, free pages {}, used pages {}", allocator.total_pages, allocator.free_pages, allocator.used_pages);
 
-    let page = allocator.alloc_page();
+    let PhyAddr(page) = allocator.alloc_page().expect("out of memory");
+    println!("test allocation: 0x{:x}", page);
+    println!("allocator, total pages {}, free pages {}, used pages {}", allocator.total_pages, allocator.free_pages, allocator.used_pages);
+
+    let PhyAddr(page) = allocator.alloc_page().expect("out of memory");
     println!("test allocation: 0x{:x}", page as u64);
     println!("allocator, total pages {}, free pages {}, used pages {}", allocator.total_pages, allocator.free_pages, allocator.used_pages);
 
-    let page = allocator.alloc_page();
-    println!("test allocation: 0x{:x}", page as u64);
-    println!("allocator, total pages {}, free pages {}, used pages {}", allocator.total_pages, allocator.free_pages, allocator.used_pages);
-
-    allocator.free_page(page);
+    allocator.free_page(PhyAddr(page));
     println!("allocator after free, total pages {}, free pages {}, used pages {}", allocator.total_pages, allocator.free_pages, allocator.used_pages);
 }

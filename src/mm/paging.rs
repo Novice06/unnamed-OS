@@ -1,6 +1,6 @@
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use crate::{kernel_end, kernel_start, kernel_write_allowed_start, mm::LimineExecutableAddr, println};
+use crate::{kernel_end, kernel_start, kernel_write_allowed_start, mm::{LimineExecutableAddr, PhyAddr, VirtAddr}, println};
 use super::{LimineMemMapEntry};
 
 pub const PAGE_PRESENT: u8              = 1 << 0;
@@ -16,9 +16,10 @@ struct PageEntry<'a> {
 }
 
 impl PageEntry<'_> {
-    fn from_raw(raw: *mut u64) -> Self {
+    fn from(addr: VirtAddr) -> Self {
         let entries=  unsafe {
-            core::slice::from_raw_parts_mut(raw, 512)
+            let VirtAddr(raw) = addr;
+            core::slice::from_raw_parts_mut(raw as *mut u64, 512)
         };
 
         Self { 
@@ -26,14 +27,14 @@ impl PageEntry<'_> {
         }
     }
 
-    fn from_zeroed(raw: *mut u64) -> Self {
-        let entry = Self::from_raw(raw);
+    fn from_zeroed(addr: VirtAddr) -> Self {
+        let entry = Self::from(addr);
         entry.entries.fill(0);
 
         entry
     }
 
-    fn from_previous_level(&mut self, index: usize, force_map: bool, flags: u8) -> Option<Self> {
+    fn from_previous_level(&mut self, index: usize, force_map: bool) -> Option<Self> {
 
         let hhdm = HHDM_OFFSET.load(Ordering::Relaxed);
         let mut page_was_present = false;
@@ -42,20 +43,23 @@ impl PageEntry<'_> {
             page_was_present = true;
             self.get(index) & 0x000FFFFFFFFFF000
         } else if force_map {
-            let addr = super::physical::PHYSICAL_MEMORY_ALLOCATOR.lock().alloc_page();
-            self.set(index, addr as u64, flags);
+            let PhyAddr(addr) = super::physical::PHYSICAL_MEMORY_ALLOCATOR
+            .lock()
+            .alloc_page()?;
 
-            addr as u64
+            self.set(index, addr, PAGE_PRESENT | PAGE_USER | PAGE_WRITABLE);
+
+            addr
         } else {
             return None;
         };
 
-        let addr = addr + hhdm;
+        let addr = VirtAddr(addr + hhdm);
         Some(
             if page_was_present {
-                Self::from_raw(addr as *mut u64)
+                Self::from(addr)
             }else {
-                Self::from_zeroed(addr as *mut u64)
+                Self::from_zeroed(addr)
             }
         )
     }
@@ -84,6 +88,22 @@ impl PageEntry<'_> {
     fn is_present(&self, index: usize) -> bool {
         (self.entries[index] & 1) != 0
     }
+
+    fn is_mapped(pml4_addr: VirtAddr, VirtAddr(addr): VirtAddr) -> bool {
+        let mut pml4 = PageEntry::from(pml4_addr);
+
+        let Some(mut pml3) = pml4.from_previous_level(((addr >> 39) & 0x1FF) as usize, false) else {
+            return false;
+        };
+        let Some(mut pml2) = pml3.from_previous_level(((addr >> 30) & 0x1FF) as usize, false) else {
+            return false;
+        };
+        let Some(pml1) = pml2.from_previous_level(((addr >> 21) & 0x1FF) as usize, false) else {
+            return false;
+        };
+
+        pml1.is_present(((addr >> 12) & 0x1FF) as usize)
+    }
 }
 
 static HHDM_OFFSET: AtomicU64 = AtomicU64::new(0);
@@ -95,27 +115,31 @@ static HHDM_OFFSET: AtomicU64 = AtomicU64::new(0);
 // uint64_t offset = virt & 0xFFF;
 
 
-pub fn map_pages(pml4_addr: *mut u64, virt: u64, phys: u64, num_pages: u64, flags: u8)
+pub fn map_pages(pml4_addr: VirtAddr, VirtAddr(virt): VirtAddr, PhyAddr(phys): PhyAddr, num_pages: u64, flags: u8)
 {
-    let mut pml4 = PageEntry::from_raw(pml4_addr);
+    let mut pml4 = PageEntry::from(pml4_addr);
 
     for i in 0..num_pages {
         let addr = virt + 0x1000 * i;
-        let mut pml3 = pml4.from_previous_level(((addr >> 39) & 0x1FF) as usize, true, flags).expect("cant allocate pml4");
-        let mut pml2 = pml3.from_previous_level(((addr >> 30) & 0x1FF) as usize, true, flags).expect("cant allocate pml2");
-        let mut pml1 = pml2.from_previous_level(((addr >> 21) & 0x1FF) as usize, true, flags).expect("cant allocate pml1");
+        let mut pml3 = pml4.from_previous_level(((addr >> 39) & 0x1FF) as usize, true).expect("cant allocate pml4");
+        let mut pml2 = pml3.from_previous_level(((addr >> 30) & 0x1FF) as usize, true).expect("cant allocate pml2");
+        let mut pml1 = pml2.from_previous_level(((addr >> 21) & 0x1FF) as usize, true).expect("cant allocate pml1");
 
         pml1.set(((addr >> 12) & 0x1FF) as usize, phys + 0x1000 * i, flags);
     }
 }
 
-pub fn alloc_pages(pml4_addr: *mut u64, virt: u64, num_pages: u64, flags: u8)
+pub fn alloc_pages(pml4_addr: VirtAddr, VirtAddr(virt): VirtAddr, num_pages: u64, flags: u8)
 {
     for i in 0..num_pages {
-        let frame = super::physical::PHYSICAL_MEMORY_ALLOCATOR.lock().alloc_page() as u64;
+        let current_virt = VirtAddr(virt + 0x1000 * i);
+
+        if PageEntry::is_mapped(pml4_addr, current_virt) {continue;}
+
+        let frame = super::physical::PHYSICAL_MEMORY_ALLOCATOR.lock().alloc_page().expect("out of memory");
         map_pages(
             pml4_addr,
-            virt + 0x1000 * i,
+            current_virt,
             frame,
             1,
             flags
@@ -128,7 +152,8 @@ pub fn init(limine_hhdm_offset: u64, mem_map_entries: &[LimineMemMapEntry], exec
 
     let hhdm = HHDM_OFFSET.load(Ordering::Relaxed);
 
-    let pml4_addr = super::physical::PHYSICAL_MEMORY_ALLOCATOR.lock().alloc_page() as u64 + hhdm;
+    let pml4_addr_phys = super::physical::PHYSICAL_MEMORY_ALLOCATOR.lock().alloc_page().expect("out of memory");
+    let pml4_addr_virt = VirtAddr(pml4_addr_phys.0 + hhdm);
 
     // map section to hhdm
     for entry in mem_map_entries {
@@ -137,7 +162,8 @@ pub fn init(limine_hhdm_offset: u64, mem_map_entries: &[LimineMemMapEntry], exec
             super::LIMINE_MEMMAP_USABLE, 
             super::LIMINE_MEMMAP_BOOTLOADER_RECLAIMABLE, 
             super::LIMINE_MEMMAP_EXECUTABLE_AND_MODULES, 
-            super::LIMINE_MEMMAP_FRAMEBUFFER
+            super::LIMINE_MEMMAP_FRAMEBUFFER,
+            super::_LIMINE_MEMMAP_ACPI_RECLAIMABLE,
         ].contains(&entry.etype) {
 
             let flags = if entry.etype == super::LIMINE_MEMMAP_FRAMEBUFFER {
@@ -147,9 +173,9 @@ pub fn init(limine_hhdm_offset: u64, mem_map_entries: &[LimineMemMapEntry], exec
             };
 
             map_pages(
-                pml4_addr as *mut u64, 
-                entry.base + hhdm, 
-                entry.base, 
+                pml4_addr_virt,
+                VirtAddr(entry.base + hhdm), 
+                PhyAddr(entry.base), 
                 entry.length / 0x1000, 
                 flags
             );
@@ -160,14 +186,13 @@ pub fn init(limine_hhdm_offset: u64, mem_map_entries: &[LimineMemMapEntry], exec
 
     // map kernel
     let length_non_writable = unsafe {
-        println!("start {:x} end {:x}", core::ptr::from_ref(&kernel_start) as u64, core::ptr::from_ref(&kernel_write_allowed_start) as u64);
         (core::ptr::from_ref(&kernel_write_allowed_start) as u64 - core::ptr::from_ref(&kernel_start) as u64 + 0xFFF) / 0x1000
     };
 
     map_pages(
-        pml4_addr as *mut u64,
-        executable_addr.virtual_base, 
-        executable_addr.physical_base, 
+        pml4_addr_virt,
+        VirtAddr(executable_addr.virtual_base), 
+        PhyAddr(executable_addr.physical_base), 
         length_non_writable,
         PAGE_PRESENT | PAGE_GLOBAL
     );
@@ -176,9 +201,9 @@ pub fn init(limine_hhdm_offset: u64, mem_map_entries: &[LimineMemMapEntry], exec
         (core::ptr::from_ref(&kernel_end) as u64 - core::ptr::from_ref(&kernel_write_allowed_start) as u64 + 0xFFF) / 0x1000
     };
     map_pages(
-        pml4_addr as *mut u64,
-        executable_addr.virtual_base + (length_non_writable * 0x1000), 
-        executable_addr.physical_base + (length_non_writable * 0x1000), 
+        pml4_addr_virt,
+        VirtAddr(executable_addr.virtual_base + (length_non_writable * 0x1000)), 
+        PhyAddr(executable_addr.physical_base + (length_non_writable * 0x1000)), 
         length_writable,
         PAGE_PRESENT | PAGE_WRITABLE | PAGE_GLOBAL
     );
@@ -187,12 +212,13 @@ pub fn init(limine_hhdm_offset: u64, mem_map_entries: &[LimineMemMapEntry], exec
     let kernel_size = length_non_writable + length_writable;
     let kernel_virtual_end = executable_addr.virtual_base + (kernel_size * 0x1000);
     alloc_pages(
-        pml4_addr as *mut u64,
-        kernel_virtual_end,
+        pml4_addr_virt,
+        VirtAddr(kernel_virtual_end),
         8, // 32 kb
         PAGE_PRESENT | PAGE_WRITABLE | PAGE_GLOBAL
     );
 
+    unsafe { crate::switch_pdbr(pml4_addr_phys.0) };
     kernel_virtual_end + 8 * 0x1000 // return the stack top
 
 }

@@ -63,6 +63,29 @@ read_msr:
     pop rbp
     ret
 
+global switch_pdbr
+switch_pdbr:
+    push rbp
+    mov rbp, rsp
+
+    mov cr3, rdi
+
+    mov rsp, rbp
+    pop rbp
+    ret
+
+global switch_stack
+switch_stack:
+    push rbp
+    mov rbp, rsp
+
+    mov rsp, rdi
+    jmp rsi
+
+    mov rsp, rbp
+    pop rbp
+    ret
+
 global halt
 halt:
     push rbp

@@ -48,13 +48,6 @@ void ISR_init()
     ISR_initializeGates();
 }
 
-static inline uintptr_t get_cr2(void) {
-    uintptr_t value;
-    __asm__ volatile ("mov %%cr2, %0" : "=r"(value));
-    return value;
-}
-
-
 void ISR_handler(Registers* regs)
 {
     if(g_ISR_handlers[regs->interrupt] != NULL)
@@ -73,9 +66,13 @@ void ISR_handler(Registers* regs)
                regs->rsp, regs->rbp, regs->rip, regs->rflags, regs->cs, regs->ds, regs->ss);
 
         SERIAL_printf("  interrupt=%lx  errorcode=%lx\n", regs->interrupt, regs->error);
-        SERIAL_printf("cr2: 0x%lx\n", get_cr2());
 
         SERIAL_puts("KERNEL PANIC!\n");
         hcf();
     }
+}
+
+void ISR_registerNewHandler(int interrupt, ISRHandler handler)
+{
+    g_ISR_handlers[interrupt] = handler;
 }

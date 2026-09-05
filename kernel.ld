@@ -52,10 +52,10 @@ SECTIONS
         *(.note.gnu.build-id)
     } :rodata
 
-    kernel_write_allowed_start = .;
-
     /* Move to the next memory page for .data */
     . = ALIGN(CONSTANT(MAXPAGESIZE));
+
+    kernel_write_allowed_start = .;
 
     .data : {
         *(.data .data.*)

@@ -13,6 +13,12 @@ const LIMINE_MEMMAP_EXECUTABLE_AND_MODULES: u64 = 6;
 const LIMINE_MEMMAP_FRAMEBUFFER: u64 = 7;
 const _LIMINE_MEMMAP_RESERVED_MAPPED: u64 = 8;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PhyAddr(pub u64);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VirtAddr(pub u64);
+
 #[repr(C)]
 pub struct LimineMemMapEntry {
     base: u64,

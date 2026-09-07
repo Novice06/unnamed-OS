@@ -1,3 +1,4 @@
+use core::{panic, sync::atomic::Ordering};
 use crate::{mm::PhyAddr, println, spinlock::SpinLock};
 use super::LimineMemMapEntry;
 
@@ -117,7 +118,8 @@ impl Bitmap {
 }
 
 struct FreePage {
-    next: *mut FreePage
+    next: *mut FreePage,
+    back: *mut FreePage
 }
 
 struct FreeList {
@@ -133,10 +135,15 @@ impl FreeList {
             head: core::ptr::null_mut()
         };
 
+        let hhdm = crate::mm::HHDM_OFFSET.load(Ordering::Relaxed);
+
         // initializing the head
         let first_free = bitmap.search_free_ranges(1, total_pages).unwrap();
-        list.head = Bitmap::index_to_addr(first_free) as *mut FreePage;
-        unsafe {(*list.head).next = core::ptr::null_mut()};
+        list.head = (Bitmap::index_to_addr(first_free) + hhdm) as *mut FreePage;
+        unsafe {
+            (*list.head).back = core::ptr::null_mut();
+            (*list.head).next = core::ptr::null_mut();
+        };
 
         let mut tail= list.head;
         
@@ -144,8 +151,9 @@ impl FreeList {
             if bitmap.is_used(index) {continue;}
 
             unsafe {
-                let new_tail = Bitmap::index_to_addr(index) as *mut FreePage;
+                let new_tail = (Bitmap::index_to_addr(index) + hhdm) as *mut FreePage;
                 (*new_tail).next = core::ptr::null_mut();
+                (*new_tail).back = (*tail).back;
 
                 (*tail).next = new_tail;
                 tail = new_tail;
@@ -155,23 +163,34 @@ impl FreeList {
         list
     }
 
-    fn get(&mut self) -> *mut u8 {
-        let ret = self.head;
+    fn get(&mut self) -> Option<PhyAddr> {
 
-        if !self.head.is_null() {
-            unsafe {
-                self.head = (*self.head).next;
-            }
+        if self.head.is_null() {
+            return None;
         }
 
-        ret as *mut u8
+        let hhdm = crate::mm::HHDM_OFFSET.load(Ordering::Relaxed);
+        let ret = self.head;
+
+        unsafe {
+            self.head = (*self.head).next;
+            (*self.head).back = core::ptr::null_mut();
+        }
+
+        Some(PhyAddr(ret as u64 - hhdm))
     }
 
-    fn put(&mut self, addr: *mut u8) {
-        let head = addr as *mut FreePage;
-        unsafe {(*head).next = self.head}
+    fn put(&mut self, PhyAddr(addr): PhyAddr) {
+        let hhdm = crate::mm::HHDM_OFFSET.load(Ordering::Relaxed);
 
-        self.head = head;
+        let new_head = (addr + hhdm) as *mut FreePage;
+
+        unsafe {
+            (*new_head).next = self.head;
+            (*new_head).back = core::ptr::null_mut();
+        }
+
+        self.head = new_head;
 
     }
 }
@@ -196,65 +215,59 @@ impl PhysMemAllocator {
     }
 
     pub fn alloc_page(&mut self) -> Option<PhyAddr> {
-        if let Some(free_list) = self.free_list.as_mut() {
-            if self.free_pages <= 0 {return None;}
 
-            // let free_list = self.free_list.as_mut().unwrap();
-            let bitmap = self.bitmap.as_mut().unwrap();
+        if self.free_pages <= 0 {return None;}
+        let bitmap = self.bitmap.as_mut().unwrap();
 
-            loop {
-                let addr = free_list.get();
-                if bitmap.is_used(Bitmap::addr_to_index(addr as u64)) {
-                    // this means that we probably allocated this page using only the bitmap
-                    // or somehow a used page got placed in the free list by error (I'm only a human after all)
-                    continue;   // anyway retry !! but seriously I need to panic here or atleast fallback to only use the bitmap
-                }
+        if let Some(mut free_list) = self.free_list.take() {
 
+            let addr = free_list.get()?;
+            if !bitmap.is_used(Bitmap::addr_to_index(addr.0)) {
                 self.used_pages += 1;
                 self.free_pages -= 1;
 
-                bitmap.set(Bitmap::addr_to_index(addr as u64)); // set this page as used
-                break Some(PhyAddr(addr as u64));
+                bitmap.set(Bitmap::addr_to_index(addr.0)); // set this page as used
+                self.free_list = Some(free_list);   // put the list back before returning.
+
+                return Some(addr);
             }
+
+            // this means that we probably allocated this page using only the bitmap and didnt correct the list
+            // or somehow a used page got placed in the free list by error (I'm only a human after all)
+            // anyway fallback to only use the bitmap because its corrupted now
+            // we could try to to rebuild the free list but that would probably take too long if we have a lot of memory
+            self.free_list = None;
+        } 
+
+        // fall back to bitmap
+
+        let free_index = bitmap.search_free_ranges(1, self.total_pages);
+
+        if let Some(index) = free_index {
+            bitmap.set(index);
+
+            self.used_pages += 1;
+            self.free_pages -= 1;
+
+            Some(PhyAddr(Bitmap::index_to_addr(index)))
         } else {
-            let free_index = self.bitmap
-            .as_ref()
-            .unwrap()
-            .search_free_ranges(1, self.total_pages);
-
-            if let Some(index) = free_index {
-                self.bitmap
-                .as_mut()
-                .unwrap()
-                .set(index);
-
-                self.used_pages += 1;
-                self.free_pages -= 1;
-
-                Some(PhyAddr(Bitmap::index_to_addr(index)))
-            } else {
-                None
-            }
+            None
         }
+        
     }
 
     pub fn free_page(&mut self, addr: PhyAddr) {
+        let bitmap = self.bitmap.as_mut().unwrap();
 
-        // self.free_list
-        // .as_mut()
-        // .unwrap()
-        // .put(addr);
-
-        let PhyAddr(addr) = addr;
+        if !bitmap.is_used(Bitmap::addr_to_index(addr.0)) {
+            panic!("tried to free an unused page!")
+        }
 
         if let Some(free_list) = self.free_list.as_mut() {
-            free_list.put(addr as *mut u8);
+            free_list.put(addr);
         }
         
-        self.bitmap
-        .as_mut()
-        .unwrap()
-        .clear(Bitmap::addr_to_index(addr));
+        bitmap.clear(Bitmap::addr_to_index(addr.0));
 
         self.free_pages += 1;
         self.used_pages -= 1;
@@ -267,7 +280,7 @@ pub fn init(memory_size: u32, mem_map_entries: &[LimineMemMapEntry], limine_hhdm
     let mut allocator = PHYSICAL_MEMORY_ALLOCATOR.lock();
     allocator.total_pages = (memory_size / 0x1000) as u32;
     allocator.bitmap = Some(Bitmap::from_memory_map(mem_map_entries, limine_hhdm_offset,allocator.total_pages));
-    // allocator.free_list = Some(FreeList::from_bitmap(allocator.bitmap.as_ref().unwrap(), allocator.total_pages));
+    allocator.free_list = Some(FreeList::from_bitmap(allocator.bitmap.as_ref().unwrap(), allocator.total_pages));
 
     for index in 0..allocator.total_pages {
         let bitmap = allocator.bitmap.as_ref().unwrap();
@@ -280,14 +293,21 @@ pub fn init(memory_size: u32, mem_map_entries: &[LimineMemMapEntry], limine_hhdm
 
     println!("allocator, total pages {}, free pages {}, used pages {}", allocator.total_pages, allocator.free_pages, allocator.used_pages);
 
-    let PhyAddr(page) = allocator.alloc_page().expect("out of memory");
-    println!("test allocation: 0x{:x}", page);
+    let PhyAddr(page1) = allocator.alloc_page().expect("out of memory");
+    println!("test allocation: 0x{:x}", page1);
     println!("allocator, total pages {}, free pages {}, used pages {}", allocator.total_pages, allocator.free_pages, allocator.used_pages);
 
-    let PhyAddr(page) = allocator.alloc_page().expect("out of memory");
-    println!("test allocation: 0x{:x}", page as u64);
+    let PhyAddr(page2) = allocator.alloc_page().expect("out of memory");
+    println!("test allocation: 0x{:x}", page2 as u64);
     println!("allocator, total pages {}, free pages {}, used pages {}", allocator.total_pages, allocator.free_pages, allocator.used_pages);
 
-    allocator.free_page(PhyAddr(page));
+    allocator.free_page(PhyAddr(page2));
     println!("allocator after free, total pages {}, free pages {}, used pages {}", allocator.total_pages, allocator.free_pages, allocator.used_pages);
+
+    let PhyAddr(page2) = allocator.alloc_page().expect("out of memory");
+    println!("test re-allocation: 0x{:x}", page2 as u64);
+    println!("allocator, total pages {}, free pages {}, used pages {}", allocator.total_pages, allocator.free_pages, allocator.used_pages);
+
+    allocator.free_page(PhyAddr(page2));
+    allocator.free_page(PhyAddr(page1));
 }

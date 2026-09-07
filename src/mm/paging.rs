@@ -1,6 +1,5 @@
-use core::sync::atomic::{AtomicU64, Ordering};
-
-use crate::{kernel_end, kernel_start, kernel_write_allowed_start, mm::{LimineExecutableAddr, PhyAddr, VirtAddr}, println};
+use core::{panic, sync::atomic::Ordering};
+use crate::{kernel_end, kernel_start, kernel_write_allowed_start, mm::{LimineExecutableAddr, PhyAddr, VirtAddr}};
 use super::{LimineMemMapEntry};
 
 pub const PAGE_PRESENT: u8              = 1 << 0;
@@ -11,32 +10,28 @@ pub const PAGE_DISABLE_CACHE: u8        = 1 << 4;
 pub const PAGE_GLOBAL: u8               = 1 << 5;
 pub const PAGE_NO_EXECUTE: u8           = 1 << 6;
 
-struct PageEntry<'a> {
-    entries: &'a mut [u64]
+struct PageEntry {
+    entries: *mut u64
 }
 
-impl PageEntry<'_> {
-    fn from(addr: VirtAddr) -> Self {
-        let entries=  unsafe {
-            let VirtAddr(raw) = addr;
-            core::slice::from_raw_parts_mut(raw as *mut u64, 512)
-        };
+impl PageEntry {
+    fn from(VirtAddr(addr): VirtAddr) -> Self {
 
         Self { 
-            entries
+            entries: addr as *mut u64
         }
     }
 
     fn from_zeroed(addr: VirtAddr) -> Self {
         let entry = Self::from(addr);
-        entry.entries.fill(0);
+        unsafe {entry.entries.write_bytes(0, 512)};
 
         entry
     }
 
     fn from_previous_level(&mut self, index: usize, force_map: bool) -> Option<Self> {
 
-        let hhdm = HHDM_OFFSET.load(Ordering::Relaxed);
+        let hhdm = crate::mm::HHDM_OFFSET.load(Ordering::Relaxed);
         let mut page_was_present = false;
 
         let addr = if self.is_present(index) {
@@ -65,11 +60,17 @@ impl PageEntry<'_> {
     }
 
     fn get(&self, index: usize) -> u64 {
-        self.entries[index]
+        if index >= 512 {panic!("index out of bound !")}
+
+        unsafe {*self.entries.add(index)}
     }
 
     fn set(&mut self, index: usize, phys_addr: u64, flags: u8) {
-        self.entries[index] = Self::flags_to_attr(flags) | (phys_addr & 0x000FFFFFFFFFF000);
+        if index >= 512 {panic!("index out of bound !")}
+
+        unsafe {
+            core::ptr::write_volatile(self.entries.add(index), Self::flags_to_attr(flags) | (phys_addr & 0x000FFFFFFFFFF000));
+        }
     }
 
     fn flags_to_attr(flags: u8) -> u64 {
@@ -86,7 +87,7 @@ impl PageEntry<'_> {
     }
 
     fn is_present(&self, index: usize) -> bool {
-        (self.entries[index] & 1) != 0
+        (self.get(index) & 1) != 0
     }
 
     fn is_mapped(pml4_addr: VirtAddr, VirtAddr(addr): VirtAddr) -> bool {
@@ -105,8 +106,6 @@ impl PageEntry<'_> {
         pml1.is_present(((addr >> 12) & 0x1FF) as usize)
     }
 }
-
-static HHDM_OFFSET: AtomicU64 = AtomicU64::new(0);
 
 // uint64_t pml4 = (virt >> 39) & 0x1FF;
 // uint64_t pml3 = (virt >> 30) & 0x1FF;
@@ -147,10 +146,9 @@ pub fn alloc_pages(pml4_addr: VirtAddr, VirtAddr(virt): VirtAddr, num_pages: u64
     }
 }
 
-pub fn init(limine_hhdm_offset: u64, mem_map_entries: &[LimineMemMapEntry], executable_addr: LimineExecutableAddr) -> u64 {
-    HHDM_OFFSET.store(limine_hhdm_offset, Ordering::Relaxed); // use the same hhdm as limine
+pub fn init(mem_map_entries: &[LimineMemMapEntry], executable_addr: LimineExecutableAddr) -> u64 {
 
-    let hhdm = HHDM_OFFSET.load(Ordering::Relaxed);
+    let hhdm = crate::mm::HHDM_OFFSET.load(Ordering::Relaxed);
 
     let pml4_addr_phys = super::physical::PHYSICAL_MEMORY_ALLOCATOR.lock().alloc_page().expect("out of memory");
     let pml4_addr_virt = VirtAddr(pml4_addr_phys.0 + hhdm);
@@ -181,8 +179,6 @@ pub fn init(limine_hhdm_offset: u64, mem_map_entries: &[LimineMemMapEntry], exec
             );
         }
     }
-
-    println!("mapping hhdm was a success!");
 
     // map kernel
     let length_non_writable = unsafe {

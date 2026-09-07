@@ -1,3 +1,5 @@
+use core::sync::atomic::{AtomicU64, Ordering};
+
 use crate::println;
 
 pub mod physical;
@@ -40,12 +42,16 @@ pub struct LimineExecutableAddr {
     virtual_base: u64,
 }
 
+static HHDM_OFFSET: AtomicU64 = AtomicU64::new(0);
+
 #[unsafe(no_mangle)]
 pub extern "C" fn MEM_init(
     mem_map: LimineMemMap,
     limine_hhdm_offset: u64,
     executable_addr: LimineExecutableAddr,
 ) -> u64 {
+
+    HHDM_OFFSET.store(limine_hhdm_offset, Ordering::Relaxed); // use the same hhdm as limine
 
     let mem_map_entries= unsafe {
         core::slice::from_raw_parts(mem_map.entries, mem_map.count as usize)
@@ -65,7 +71,7 @@ pub extern "C" fn MEM_init(
     }
 
     physical::init(memory_size as u32, mem_map_entries, limine_hhdm_offset);
-    paging::init(limine_hhdm_offset, mem_map_entries, executable_addr)
+    paging::init(mem_map_entries, executable_addr)
 
     // 0xdeadc0de
 }

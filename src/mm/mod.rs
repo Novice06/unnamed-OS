@@ -4,6 +4,7 @@ use crate::println;
 
 pub mod physical;
 pub mod paging;
+pub mod slab;
 
 const LIMINE_MEMMAP_USABLE: u64 = 0;
 const _LIMINE_MEMMAP_RESERVED: u64 = 1;

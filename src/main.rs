@@ -1,11 +1,15 @@
 #![no_std]
 #![no_main]
 
+extern crate alloc;
+
 pub mod mm;
 pub mod spinlock;
 pub mod display;
 
 use core::panic::PanicInfo;
+
+use alloc::vec;
 /// This function is called on panic.
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
@@ -60,5 +64,17 @@ pub extern "C" fn draw_framebuffer(
                 );
             }
         }
+    }
+
+    let mut vector = vec![1, 2];
+    for i in &vector {
+        println!("{i}");
+    }
+
+    vector.push(22);
+    vector.push(2006);
+
+    for i in &vector {
+        println!("{i}");
     }
 }

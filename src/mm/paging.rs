@@ -1,5 +1,5 @@
-use core::{panic, sync::atomic::Ordering};
-use crate::{kernel_end, kernel_start, kernel_write_allowed_start, mm::{LimineExecutableAddr, PhyAddr, VirtAddr}};
+use core::{panic, sync::atomic::Ordering::{self, Relaxed}};
+use crate::{kernel_end, kernel_start, kernel_write_allowed_start, mm::{HHDM_OFFSET, LimineExecutableAddr, PhyAddr, VirtAddr}};
 use super::{LimineMemMapEntry};
 
 pub const PAGE_PRESENT: u8              = 1 << 0;
@@ -126,6 +126,22 @@ pub fn map_pages(pml4_addr: VirtAddr, VirtAddr(virt): VirtAddr, PhyAddr(phys): P
 
         pml1.set(((addr >> 12) & 0x1FF) as usize, phys + 0x1000 * i, flags);
     }
+}
+
+pub fn map_mmio(PhyAddr(phys): PhyAddr, num_pages: u64) {
+    let hhdm = HHDM_OFFSET.load(Relaxed);
+    let pml4_addr = unsafe {
+        crate::get_pdbr()
+    };
+    let pml4_virt = VirtAddr(pml4_addr + hhdm);
+
+    map_pages(
+        pml4_virt, 
+        VirtAddr(phys + hhdm), 
+        PhyAddr(phys), 
+        num_pages,
+        PAGE_PRESENT | PAGE_WRITABLE | PAGE_DISABLE_CACHE | PAGE_NO_EXECUTE
+    );
 }
 
 pub fn alloc_pages(pml4_addr: VirtAddr, VirtAddr(virt): VirtAddr, num_pages: u64, flags: u8)

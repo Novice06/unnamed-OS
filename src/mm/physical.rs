@@ -272,6 +272,28 @@ impl PhysMemAllocator {
         self.free_pages += 1;
         self.used_pages -= 1;
     }
+
+    pub fn reclaim(&mut self, regions: &[LimineMemMapEntry], etype: u64) {
+
+        let reclaimed_region = regions
+        .iter()
+        .filter(|entry| entry.etype == etype);
+
+        let bitmap = self.bitmap.as_mut().unwrap();
+
+        for region in reclaimed_region {
+            for addr in (region.base..region.base + region.length).step_by(0x1000) {
+                let index = Bitmap::addr_to_index(addr);
+                let addr = Bitmap::index_to_addr(index);
+                bitmap.clear(index);
+
+                if let Some(free_list) = self.free_list.as_mut() {
+                    free_list.put(PhyAddr(addr));
+                }
+                
+            }
+        }
+    }
 }
 
 pub static PHYSICAL_MEMORY_ALLOCATOR: SpinLock<PhysMemAllocator> = SpinLock::new(PhysMemAllocator::new());
@@ -290,24 +312,4 @@ pub fn init(memory_size: u32, mem_map_entries: &[LimineMemMapEntry], limine_hhdm
             allocator.free_pages += 1;
         }
     }
-
-    println!("allocator, total pages {}, free pages {}, used pages {}", allocator.total_pages, allocator.free_pages, allocator.used_pages);
-
-    let PhyAddr(page1) = allocator.alloc_page().expect("out of memory");
-    println!("test allocation: 0x{:x}", page1);
-    println!("allocator, total pages {}, free pages {}, used pages {}", allocator.total_pages, allocator.free_pages, allocator.used_pages);
-
-    let PhyAddr(page2) = allocator.alloc_page().expect("out of memory");
-    println!("test allocation: 0x{:x}", page2 as u64);
-    println!("allocator, total pages {}, free pages {}, used pages {}", allocator.total_pages, allocator.free_pages, allocator.used_pages);
-
-    allocator.free_page(PhyAddr(page2));
-    println!("allocator after free, total pages {}, free pages {}, used pages {}", allocator.total_pages, allocator.free_pages, allocator.used_pages);
-
-    let PhyAddr(page2) = allocator.alloc_page().expect("out of memory");
-    println!("test re-allocation: 0x{:x}", page2 as u64);
-    println!("allocator, total pages {}, free pages {}, used pages {}", allocator.total_pages, allocator.free_pages, allocator.used_pages);
-
-    allocator.free_page(PhyAddr(page2));
-    allocator.free_page(PhyAddr(page1));
 }

@@ -1,8 +1,9 @@
 use core::{alloc::GlobalAlloc, sync::atomic::Ordering::Relaxed};
-
 use crate::{mm::{HHDM_OFFSET, PhyAddr, VirtAddr, physical::PHYSICAL_MEMORY_ALLOCATOR}, spinlock::SpinLock};
 
-const CHECKSUM: u64 = 0xBADA55C0DEBABE;
+mod ffi;
+
+const HEADER_MAGIC: u64 = 0xBADA55_C0DE_BABE;
 
 #[repr(C)]
 struct SlabHeader {
@@ -11,7 +12,7 @@ struct SlabHeader {
     free_list: *mut u8,
     used_slots: usize,
     slab_class: usize,
-    checksum: u64,
+    header_magic: u64,
 }
 
 impl SlabHeader {
@@ -25,7 +26,7 @@ impl SlabHeader {
         header_ref.back = core::ptr::null_mut();
         header_ref.slab_class = class;
         header_ref.used_slots = 0;
-        header_ref.checksum = CHECKSUM;
+        header_ref.header_magic = HEADER_MAGIC;
 
         header_ref.free_list = (page + 0x1000 - class as u64) as *mut u8;    // start at the end that way will will always be aligned
         let mut tail = header_ref.free_list;
@@ -70,24 +71,24 @@ impl SlabHeader {
 struct SlabClass {
     full_list: *mut SlabHeader,
     partial_list: *mut SlabHeader,
-    class: usize,
+    class_size: usize,
     total_slot: usize,
 }
 unsafe impl Sync for SlabClass {}
 unsafe impl Send for SlabClass {}
 impl SlabClass {
     const fn new(class_index: usize) -> Self {
-        let class = 1usize << (class_index + 3);    // classes : 8, 16, 32, 64, 128, 256, 512, 1024, 2048
+        let class_size = 1usize << (class_index + 3);    // classes : 8, 16, 32, 64, 128, 256, 512, 1024, 2048
         let usable = 4096 - core::mem::size_of::<SlabHeader>();
-        let slots = usable / class;
-        Self { full_list: core::ptr::null_mut(), partial_list: core::ptr::null_mut(), class: class, total_slot: slots }
+        let slots = usable / class_size;
+        Self { full_list: core::ptr::null_mut(), partial_list: core::ptr::null_mut(), class_size: class_size, total_slot: slots }
     }
 
     fn refill(&mut self) {
 
         let PhyAddr(page) = PHYSICAL_MEMORY_ALLOCATOR.lock().alloc_page().expect("out of memory");
         let hhdm = HHDM_OFFSET.load(Relaxed);
-        let header = SlabHeader::from_page(VirtAddr(page + hhdm), self.class, self.total_slot);
+        let header = SlabHeader::from_page(VirtAddr(page + hhdm), self.class_size, self.total_slot);
 
         unsafe {
             Self::push_to_list(&mut self.partial_list, header);
@@ -207,7 +208,7 @@ unsafe impl GlobalAlloc for KernelAllocator {
             SLAB[class_index].lock().alloc()
         } else {
             let num_pages = (max_size + 4095) / 4096;
-            if num_pages > 0x1000 {todo!("time to implement multiple page allocator")}
+            if num_pages > 1 {todo!("time to implement multiple page allocator")}
 
             let PhyAddr(addr) = PHYSICAL_MEMORY_ALLOCATOR.lock().alloc_page().expect("out of memory");
             let hhdm = HHDM_OFFSET.load(Relaxed);
@@ -225,10 +226,13 @@ unsafe impl GlobalAlloc for KernelAllocator {
                 &mut *(page_addr as *mut SlabHeader)
             };
 
-            assert_eq!(header.checksum, CHECKSUM, "Corrupted Slab Header!");
+            assert_eq!(header.header_magic, HEADER_MAGIC, "Corrupted Slab Header!");
 
             SLAB[class_index].lock().free(ptr, header);
         } else {
+            let num_pages = (required_size + 4095) / 4096;
+            if num_pages > 1 {todo!("time to implement multiple page allocator")}
+            
             let hhdm = HHDM_OFFSET.load(Relaxed);
             let phys_addr = page_addr - hhdm;
 

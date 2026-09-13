@@ -74,6 +74,17 @@ switch_pdbr:
     pop rbp
     ret
 
+global get_pdbr
+get_pdbr:
+    push rbp
+    mov rbp, rsp
+
+    mov rax, cr3
+
+    mov rsp, rbp
+    pop rbp
+    ret
+
 global switch_stack
 switch_stack:
     push rbp

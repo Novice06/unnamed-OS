@@ -1,6 +1,6 @@
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use crate::println;
+use crate::{mm::physical::PHYSICAL_MEMORY_ALLOCATOR, println};
 
 pub mod physical;
 pub mod paging;
@@ -75,4 +75,19 @@ pub extern "C" fn MEM_init(
     paging::init(mem_map_entries, executable_addr)
 
     // 0xdeadc0de
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn MEM_reclaim_region(mem_map: LimineMemMap, region: u64) {
+    let mem_map_entries= unsafe {
+        core::slice::from_raw_parts(mem_map.entries, mem_map.count as usize)
+    };
+
+    PHYSICAL_MEMORY_ALLOCATOR.lock().reclaim(mem_map_entries, region);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn MEM_map_MMIO(base: u64, size: u64) {
+    let num_pages = size / 0x1000;
+    paging::map_mmio(PhyAddr(base), num_pages);
 }

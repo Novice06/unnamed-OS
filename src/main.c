@@ -43,6 +43,9 @@ void early_page_fault_handler(Registers* regs)
 
 void kmain_continue()
 {
+    // reclaime bootloader region
+    // MEM_reclaim_region(contiguous, LIMINE_MEMMAP_BOOTLOADER_RECLAIMABLE);
+
     if(!ACPI_parse(rsdp_request.response->address))
         SERIAL_printf("cannot parse acpi tables\n");
 

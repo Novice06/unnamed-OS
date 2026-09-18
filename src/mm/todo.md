@@ -1,0 +1,3 @@
+- [ ] upgrade the flags in paging module to take into account the PAT table
+- [ ] upgrade the physical memory manager to handle Higher page allocation (lets say above 16MB) and Lower page (below 16MB) allocation
+- [ ] support for multiple physical page allocation without corrupting the free list

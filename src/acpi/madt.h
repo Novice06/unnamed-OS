@@ -4,38 +4,40 @@
 
 typedef struct
 {
-    uint8_t type;
-    uint8_t length;
-}__attribute__ ((packed)) RecordHeader_t;
+    uint8_t processor_id;
+    uint8_t apic_id;
+    uint32_t flags;
+} ProcessorLapic;
 
 typedef struct
 {
-    RecordHeader_t header;
-    uint8_t io_pic_id;
-    uint8_t reserved;
-    uint32_t io_pic_addr;
-    uint32_t global_SI_base;
-}__attribute__ ((packed)) IO_pic_t;
+    uint8_t io_apic_id;
+    uintptr_t io_apic_addr;
+    uint32_t gsi_base;
+} IoApic;
 
 typedef struct
 {
-    RecordHeader_t header;
     uint8_t bus_source;
     uint8_t irq_source;
-    uint32_t global_SI;
+    uint32_t gsi;
     uint16_t flags;
-}__attribute__ ((packed)) IO_pic_IS_override_t;
+} InterruptSourceOverride;
 
 typedef struct
-{   
-    int io_apic_count;
-    IO_pic_t io_apic[32];
+{
+    uintptr_t localApicAddr;
+    uint32_t flags;
 
-    int is_override_count;
-    IO_pic_IS_override_t is_override[32];
-}IO_pic_info_t;
+    uint32_t processor_lapic_count;
+    ProcessorLapic **lapics;
+    
+    uint32_t io_apic_count;
+    IoApic **io_apics;
 
+    uint32_t interrupt_source_override_count;
+    InterruptSourceOverride **interrupts;
+}MADT;
 
 void madt_parse(void* table_base);
-uint32_t MADT_getLocalApicAddr();
-IO_pic_info_t* MADT_getIOApicInfo();
+MADT* MADT_get();

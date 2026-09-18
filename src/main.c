@@ -49,8 +49,8 @@ void kmain_continue()
     if(!ACPI_parse(rsdp_request.response->address))
         SERIAL_printf("cannot parse acpi tables\n");
 
-    // LAPIC_init();
-    // IOAPIC_init();
+    LAPIC_init();
+    IOAPIC_init();
 
     // Fetch the first framebuffer.
     struct limine_framebuffer *framebuffer = framebuffer_request.response->framebuffers[0];

@@ -2,6 +2,8 @@
 
 #include <display/serial.h>
 
+#include <mm/rust_interface.h>
+
 #include <utils/utils.h>
 #include <utils/limine_requests.h>
 
@@ -50,7 +52,8 @@ void LAPIC_init()
 
     // TODO: check apic with cpuid
 
-    lapic_base_addr = (uint32_t*)((read_msr(IA32_APIC_BASE) & 0x000FFFFFFFFFF000) + hhdm_request.response->offset);
+    uint32_t lapic_physical = read_msr(IA32_APIC_BASE) & 0x000FFFFFFFFFF000; 
+    lapic_base_addr = (uint32_t*) MEM_map_MMIO(lapic_physical, 4096);
     SERIAL_printf("lapic at 0x%lx\n", lapic_base_addr);
 
     // enable APIC by setting bit 8 (Software Enable) of SVR (0xF0)

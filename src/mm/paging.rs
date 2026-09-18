@@ -128,7 +128,7 @@ pub fn map_pages(pml4_addr: VirtAddr, VirtAddr(virt): VirtAddr, PhyAddr(phys): P
     }
 }
 
-pub fn map_mmio(PhyAddr(phys): PhyAddr, num_pages: u64) {
+pub fn map_mmio(PhyAddr(phys): PhyAddr, num_pages: u64) -> VirtAddr{
     let hhdm = HHDM_OFFSET.load(Relaxed);
     let pml4_addr = unsafe {
         crate::get_pdbr()
@@ -142,6 +142,8 @@ pub fn map_mmio(PhyAddr(phys): PhyAddr, num_pages: u64) {
         num_pages,
         PAGE_PRESENT | PAGE_WRITABLE | PAGE_DISABLE_CACHE | PAGE_NO_EXECUTE
     );
+
+    VirtAddr(phys + hhdm)
 }
 
 pub fn alloc_pages(pml4_addr: VirtAddr, VirtAddr(virt): VirtAddr, num_pages: u64, flags: u8)

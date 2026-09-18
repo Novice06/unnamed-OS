@@ -87,7 +87,10 @@ pub extern "C" fn MEM_reclaim_region(mem_map: LimineMemMap, region: u64) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn MEM_map_MMIO(base: u64, size: u64) {
+pub extern "C" fn MEM_map_MMIO(base: u64, size: u64) -> u64 {
     let num_pages = size / 0x1000;
-    paging::map_mmio(PhyAddr(base), num_pages);
+    
+    let VirtAddr(virt) = paging::map_mmio(PhyAddr(base), num_pages);
+
+    virt
 }

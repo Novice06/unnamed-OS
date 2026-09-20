@@ -66,7 +66,7 @@ IoApic* find_ioApic(uint32_t gsi) {
     return NULL;
 } 
 
-void IOAPIC_setGSI(uint32_t gsi, uint32_t cpu_lapic_id, bool is_edge_triggered)
+void IOAPIC_setGSI(uint32_t gsi, uint8_t vector, uint32_t cpu_lapic_id, bool is_edge_triggered)
 {
     IoApic* io_apic = find_ioApic(gsi);
 
@@ -74,22 +74,21 @@ void IOAPIC_setGSI(uint32_t gsi, uint32_t cpu_lapic_id, bool is_edge_triggered)
     {
         uint32_t index = gsi - io_apic->gsi_base;
 
-        uint64_t vector = VECTOR_OFFSET + gsi;
-        uint64_t delivery_mode = 0; // fixed
-        uint64_t destination_mode = 0; // physical
-        uint64_t interrupt_polarity = 0;    // high active
-        uint64_t trigger_mode = is_edge_triggered ? 0 : 1;
-        uint64_t mask = 0;  // interrupt not masked
-        uint64_t cpu_handler = cpu_lapic_id;
+        uint8_t delivery_mode = 0; // fixed
+        uint8_t destination_mode = 0; // physical
+        uint8_t interrupt_polarity = 0;    // high active
+        uint8_t trigger_mode = is_edge_triggered ? 0 : 1;
+        uint8_t mask = 0;  // interrupt not masked
+        uint8_t cpu_handler = cpu_lapic_id;
 
         uint64_t IOREDTBL_entry = 
-            vector | 
-            delivery_mode << 8 |
-            destination_mode << 11 |
-            interrupt_polarity << 13 |
-            trigger_mode << 15 |
-            mask << 16 |
-            cpu_handler << 56
+            (uint64_t)vector | 
+            (uint64_t)delivery_mode << 8 |
+            (uint64_t)destination_mode << 11 |
+            (uint64_t)interrupt_polarity << 13 |
+            (uint64_t)trigger_mode << 15 |
+            (uint64_t)mask << 16 |
+            (uint64_t)cpu_handler << 56
         ;
 
         IOAPIC_write((void*)io_apic->io_apic_virt_addr, 0x10 + index * 2, IOREDTBL_entry & 0xFFFFFFFF);

@@ -153,7 +153,7 @@ impl FreeList {
             unsafe {
                 let new_tail = (Bitmap::index_to_addr(index) + hhdm) as *mut FreePage;
                 (*new_tail).next = core::ptr::null_mut();
-                (*new_tail).back = (*tail).back;
+                (*new_tail).back = tail;
 
                 (*tail).next = new_tail;
                 tail = new_tail;
@@ -174,7 +174,9 @@ impl FreeList {
 
         unsafe {
             self.head = (*self.head).next;
-            (*self.head).back = core::ptr::null_mut();
+            if !self.head.is_null() {
+                (*self.head).back = core::ptr::null_mut();
+            }
         }
 
         Some(PhyAddr(ret as u64 - hhdm))

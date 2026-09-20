@@ -42,6 +42,12 @@ void early_page_fault_handler(Registers* regs)
     hcf();
 }
 
+void test_lapic_timer(Registers* regs)
+{
+    SERIAL_printf("tick every 50ms\n");
+    lapic_send_eoi();
+}
+
 void kmain_continue()
 {
     // reclaime bootloader region
@@ -53,21 +59,13 @@ void kmain_continue()
     // reclaime acpi
     // MEM_reclaim_region(contiguous, LIMINE_MEMMAP_ACPI_RECLAIMABLE);
 
-    // test acpi timer
-    ACPI_timer_wait(1000);
-    ACPI_timer_wait(1000);
-    ACPI_timer_wait(1000);
-    ACPI_timer_wait(1000);
-    ACPI_timer_wait(1000);
-    ACPI_timer_wait(1000);
-    ACPI_timer_wait(1000);
-    ACPI_timer_wait(1000);
-    ACPI_timer_wait(1000);
-    ACPI_timer_wait(1000);
-
-
     LAPIC_init();
     IOAPIC_init();
+
+    // test lapic timer
+    ISR_registerNewHandler(0x20, test_lapic_timer);
+    LAPIC_init_periodic_timer(0x20, 50);
+    enable_interrupts();
 
     // Fetch the first framebuffer.
     struct limine_framebuffer *framebuffer = framebuffer_request.response->framebuffers[0];

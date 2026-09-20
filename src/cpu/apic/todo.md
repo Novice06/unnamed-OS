@@ -1,0 +1,1 @@
+- [ ] maybe use TSC-Deadline Mode for better precision in the lapic timer

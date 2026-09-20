@@ -59,5 +59,5 @@ isr_common:
     pop rcx
     pop rax
 
-    add esp, 16         ; remove error code and interrupt number
+    add rsp, 16         ; remove error code and interrupt number
     iretq                ; will pop: cs, rip, rflags, ss, rsp

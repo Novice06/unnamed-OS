@@ -132,3 +132,25 @@ halt:
     mov rsp, rbp
     pop rbp
     ret
+
+global enable_interrupts
+enable_interrupts:
+    push rbp
+    mov rbp, rsp
+
+    sti
+
+    mov rsp, rbp
+    pop rbp
+    ret
+
+global disable_interrupts
+disable_interrupts:
+    push rbp
+    mov rbp, rsp
+
+    cli
+
+    mov rsp, rbp
+    pop rbp
+    ret

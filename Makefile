@@ -91,7 +91,8 @@ run: image
 	-drive if=pflash,format=raw,readonly=on,file=OVMF_CODE_4M.fd \
     -drive if=pflash,format=raw,file=OVMF_VARS_4M.fd \
     -drive if=ide,file=build/image.hdd,format=raw \
-	-serial stdio 2>&1
+	-serial stdio 2>&1 \
+	-smp 2
 
 clean:
 	rm -rf build/

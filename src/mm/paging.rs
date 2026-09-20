@@ -1,5 +1,5 @@
 use core::{panic, sync::atomic::Ordering::{self, Relaxed}};
-use crate::{kernel_end, kernel_start, kernel_write_allowed_start, mm::{HHDM_OFFSET, LimineExecutableAddr, PhyAddr, VirtAddr}};
+use crate::{kernel_end, kernel_start, kernel_write_allowed_start, mm::{HHDM_OFFSET, LimineExecutableAddr, PhyAddr, VirtAddr}, spinlock::SpinLock};
 use super::{LimineMemMapEntry};
 
 pub const PAGE_PRESENT: u8              = 1 << 0;
@@ -9,6 +9,8 @@ pub const PAGE_WRITE_THROUGH_CACHE: u8  = 1 << 3;
 pub const PAGE_DISABLE_CACHE: u8        = 1 << 4;
 pub const PAGE_GLOBAL: u8               = 1 << 5;
 pub const PAGE_NO_EXECUTE: u8           = 1 << 6;
+
+static PAGING_LOCK: SpinLock<()> = SpinLock::new(());
 
 struct PageEntry {
     entries: *mut u64
@@ -114,8 +116,10 @@ impl PageEntry {
 // uint64_t offset = virt & 0xFFF;
 
 
-pub fn map_pages(pml4_addr: VirtAddr, VirtAddr(virt): VirtAddr, PhyAddr(phys): PhyAddr, num_pages: u64, flags: u8)
+fn map_pages(pml4_addr: VirtAddr, VirtAddr(virt): VirtAddr, PhyAddr(phys): PhyAddr, num_pages: u64, flags: u8)
 {
+    // assume we posess the lock !
+
     let mut pml4 = PageEntry::from(pml4_addr);
 
     for i in 0..num_pages {
@@ -129,6 +133,8 @@ pub fn map_pages(pml4_addr: VirtAddr, VirtAddr(virt): VirtAddr, PhyAddr(phys): P
 }
 
 pub fn map_mmio(PhyAddr(phys): PhyAddr, num_pages: u64) -> VirtAddr{
+    let _guard = PAGING_LOCK.lock();
+
     let hhdm = HHDM_OFFSET.load(Relaxed);
     let pml4_addr = unsafe {
         crate::get_pdbr()
@@ -148,6 +154,8 @@ pub fn map_mmio(PhyAddr(phys): PhyAddr, num_pages: u64) -> VirtAddr{
 
 pub fn alloc_pages(pml4_addr: VirtAddr, VirtAddr(virt): VirtAddr, num_pages: u64, flags: u8)
 {
+    let _guard = PAGING_LOCK.lock();
+
     for i in 0..num_pages {
         let current_virt = VirtAddr(virt + 0x1000 * i);
 

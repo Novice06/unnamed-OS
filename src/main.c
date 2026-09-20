@@ -44,7 +44,7 @@ void early_page_fault_handler(Registers* regs)
 
 void test_lapic_timer(Registers* regs)
 {
-    SERIAL_printf("tick every 50ms\n");
+    SERIAL_printf(".");
     lapic_send_eoi();
 }
 
@@ -92,18 +92,26 @@ void kmain()
     if(framebuffer_request.response == NULL || framebuffer_request.response->framebuffer_count < 1)
         hcf();
 
-    if((void*)rsdp_request.response->address == NULL)
+    if(rsdp_request.response == NULL || (void*)rsdp_request.response->address == NULL)
         hcf();
 
-    if((void*)hhdm_request.response->offset == NULL)
+    if(hhdm_request.response == NULL || (void*)hhdm_request.response->offset == NULL)
         hcf();
 
-    if((void*)memmap_request.response->entries == NULL)
+    if(memmap_request.response == NULL || (void*)memmap_request.response->entries == NULL)
+        hcf();
+
+    if(mp_request.response == NULL || mp_request.response->cpu_count <= 0) // we shoud at least recieve the bootstrap processor
         hcf();
 
     SERIAL_init();
 
     SERIAL_printf("hhdm offset 0x%lx\n", hhdm_request.response->offset);
+    SERIAL_printf(
+        "bootstrap lapic id: %d, cpu count: %ld\n\n",
+        mp_request.response->bsp_lapic_id,
+        mp_request.response->cpu_count
+    );
 
     GDT_init();
     IDT_init();

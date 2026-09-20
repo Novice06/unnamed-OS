@@ -17,6 +17,14 @@ typedef struct
 typedef struct
 {
     RecordHeader_t header;
+    uint8_t processor_id;
+    uint8_t apic_id;
+    uint32_t flags;
+} __attribute__((packed)) Processor_lapic_t;
+
+typedef struct
+{
+    RecordHeader_t header;
     uint8_t io_pic_id;
     uint8_t reserved;
     uint32_t io_pic_addr;
@@ -56,7 +64,12 @@ void madt_parse(void* table_base)
         switch (header->type)
         {
         case 0: {
+            Processor_lapic_t *lapic = (Processor_lapic_t *)header;
+
             ProcessorLapic *new = kmalloc(sizeof(ProcessorLapic));
+            new->processor_id = lapic->processor_id;
+            new->apic_id      = lapic->apic_id;
+            new->flags        = lapic->flags;
 
             MADT_info.processor_lapic_count++;
             MADT_info.lapics = krealloc(MADT_info.lapics, sizeof(ProcessorLapic*) * MADT_info.processor_lapic_count);

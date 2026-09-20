@@ -8,6 +8,7 @@
 
 #include "acpi.h"
 #include "madt.h"
+#include "fadt.h"
 
 // structure for revision 2 (version 2.0+)
 
@@ -68,6 +69,7 @@ bool parse_xsdp(XSDPDescriptor_t* xsdp)
         AcpiHeader_t* table = (AcpiHeader_t*)(tables->XSDT_addresses[i] + hhdm_request.response->offset);
 
         if (memcmp(table->signature, "APIC", 4) == 0) madt_parse(table);
+        else if (memcmp(table->signature, "FACP", 4) == 0) fadt_parse(table);
     }
 
     return true;

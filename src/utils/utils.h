@@ -4,7 +4,9 @@
 #include <stddef.h>
 
 extern uint8_t inb(uint16_t port);
-extern uint8_t outb(uint16_t port, uint8_t data);
+extern void outb(uint16_t port, uint8_t data);
+extern uint32_t indw(uint16_t port);
+extern void outdw(uint16_t port, uint32_t data);
 extern uint64_t read_msr(uint32_t ecx);
 extern void switch_pdbr(uint64_t pdbr);
 extern uint64_t get_pdbr();

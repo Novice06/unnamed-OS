@@ -48,6 +48,31 @@ outb:
     pop rbp
     ret
 
+global indw
+indw:
+    push rbp
+    mov rbp, rsp
+
+    mov dx, di
+    in eax, dx
+
+    mov rsp, rbp
+    pop rbp
+    ret
+
+global outdw
+outdw:
+    push rbp
+    mov rbp, rsp
+
+    mov dx, di
+    mov eax, esi
+    out dx, eax
+
+    mov rsp, rbp
+    pop rbp
+    ret
+
 global read_msr
 read_msr:
     push rbp

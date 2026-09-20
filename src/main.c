@@ -13,6 +13,7 @@
 #include <utils/limine_requests.h>
 
 #include <acpi/acpi.h>
+#include <acpi/timer.h>
 
 #include <mm/rust_interface.h>
 
@@ -51,6 +52,19 @@ void kmain_continue()
 
     // reclaime acpi
     // MEM_reclaim_region(contiguous, LIMINE_MEMMAP_ACPI_RECLAIMABLE);
+
+    // test acpi timer
+    ACPI_timer_wait(1000);
+    ACPI_timer_wait(1000);
+    ACPI_timer_wait(1000);
+    ACPI_timer_wait(1000);
+    ACPI_timer_wait(1000);
+    ACPI_timer_wait(1000);
+    ACPI_timer_wait(1000);
+    ACPI_timer_wait(1000);
+    ACPI_timer_wait(1000);
+    ACPI_timer_wait(1000);
+
 
     LAPIC_init();
     IOAPIC_init();

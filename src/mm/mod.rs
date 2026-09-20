@@ -72,8 +72,9 @@ pub extern "C" fn MEM_init(
     }
 
     physical::init(memory_size as u32, mem_map_entries, limine_hhdm_offset);
-    paging::init(mem_map_entries, executable_addr)
+    let VirtAddr(stack_top) = paging::init(mem_map_entries, executable_addr);
 
+    stack_top
     // 0xdeadc0de
 }
 

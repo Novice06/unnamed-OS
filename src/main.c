@@ -49,6 +49,9 @@ void kmain_continue()
     if(!ACPI_parse(rsdp_request.response->address))
         SERIAL_printf("cannot parse acpi tables\n");
 
+    // reclaime acpi
+    // MEM_reclaim_region(contiguous, LIMINE_MEMMAP_ACPI_RECLAIMABLE);
+
     LAPIC_init();
     IOAPIC_init();
 

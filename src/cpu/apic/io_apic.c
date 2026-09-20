@@ -21,17 +21,18 @@ void IOAPIC_init()
     {
         IoApic *io_apic = madt->io_apics[i];
 
-        io_apic->io_apic_addr = MEM_map_MMIO(io_apic->io_apic_addr, 4096);  // remapp all
+        io_apic->io_apic_virt_addr = MEM_map_MMIO(io_apic->io_apic_addr, 4096);  // remapp all
 
-        uint32_t id  = IOAPIC_read(io_apic->io_apic_addr, 0x00);
-        uint32_t ver = IOAPIC_read(io_apic->io_apic_addr, 0x01);
+        uint32_t id  = IOAPIC_read((void*)io_apic->io_apic_virt_addr, 0x00);
+        uint32_t ver = IOAPIC_read((void*)io_apic->io_apic_virt_addr, 0x01);
 
         uint8_t ioapic_id = (id >> 24) & 0xF;
         uint8_t version = ver & 0xFF;
         uint8_t max_redir = (ver >> 16) & 0xFF;
-        
+
         SERIAL_printf(
-            "IOAPIC id=%u version=0x%x redirections=%u\n",
+            "iopic at: 0x%lx, IOAPIC id=%u version=0x%x redirections=%u\n",
+            io_apic->io_apic_virt_addr,
             ioapic_id,
             version,
             max_redir + 1
@@ -40,11 +41,11 @@ void IOAPIC_init()
         // mask all interrupts
         for (int index = 0; index <= max_redir; index++)
         {
-            uint64_t IOREDTBL_entry = IOAPIC_read(io_apic->io_apic_addr, 0x10 + index * 2) | (IOAPIC_read(io_apic->io_apic_addr, 0x10 + 1 + index * 2) << 32);
+            uint64_t IOREDTBL_entry = IOAPIC_read((void*)io_apic->io_apic_virt_addr, 0x10 + index * 2) | ((uint64_t)IOAPIC_read((void*)io_apic->io_apic_virt_addr, 0x10 + 1 + index * 2) << 32);
             IOREDTBL_entry = IOREDTBL_entry | (1 << 16);
 
-            IOAPIC_write(io_apic->io_apic_addr, 0x10 + index * 2, IOREDTBL_entry & 0xFFFFFFFF);
-            IOAPIC_write(io_apic->io_apic_addr, 0x10 + 1 + index * 2, IOREDTBL_entry >> 32);
+            IOAPIC_write((void*)io_apic->io_apic_virt_addr, 0x10 + index * 2, IOREDTBL_entry & 0xFFFFFFFF);
+            IOAPIC_write((void*)io_apic->io_apic_virt_addr, 0x10 + 1 + index * 2, IOREDTBL_entry >> 32);
         }
     }
 }
@@ -56,7 +57,7 @@ IoApic* find_ioApic(uint32_t gsi) {
     {
         IoApic *io_apic = madt->io_apics[i];
 
-        uint32_t ver = IOAPIC_read(io_apic->io_apic_addr, 0x01);
+        uint32_t ver = IOAPIC_read((void*)io_apic->io_apic_virt_addr, 0x01);
         uint8_t max_redir = (ver >> 16) & 0xFF;
         
         if(gsi >= io_apic->gsi_base && gsi <= io_apic->gsi_base + max_redir) return io_apic;
@@ -91,8 +92,8 @@ void IOAPIC_setGSI(uint32_t gsi, uint32_t cpu_lapic_id, bool is_edge_triggered)
             cpu_handler << 56
         ;
 
-        IOAPIC_write(io_apic->io_apic_addr, 0x10 + index * 2, IOREDTBL_entry & 0xFFFFFFFF);
-        IOAPIC_write(io_apic->io_apic_addr, 0x10 + 1 + index * 2, IOREDTBL_entry >> 32);
+        IOAPIC_write((void*)io_apic->io_apic_virt_addr, 0x10 + index * 2, IOREDTBL_entry & 0xFFFFFFFF);
+        IOAPIC_write((void*)io_apic->io_apic_virt_addr, 0x10 + 1 + index * 2, IOREDTBL_entry >> 32);
     }
 }
 

@@ -164,7 +164,7 @@ pub fn alloc_pages(pml4_addr: VirtAddr, VirtAddr(virt): VirtAddr, num_pages: u64
     }
 }
 
-pub fn init(mem_map_entries: &[LimineMemMapEntry], executable_addr: LimineExecutableAddr) -> u64 {
+pub fn init(mem_map_entries: &[LimineMemMapEntry], executable_addr: LimineExecutableAddr) -> VirtAddr {
 
     let hhdm = crate::mm::HHDM_OFFSET.load(Ordering::Relaxed);
 
@@ -233,6 +233,6 @@ pub fn init(mem_map_entries: &[LimineMemMapEntry], executable_addr: LimineExecut
     );
 
     unsafe { crate::switch_pdbr(pml4_addr_phys.0) };
-    kernel_virtual_end + 8 * 0x1000 // return the stack top
+    VirtAddr(kernel_virtual_end + 8 * 0x1000) // return the stack top
 
 }

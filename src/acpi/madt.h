@@ -13,6 +13,7 @@ typedef struct
 {
     uint8_t io_apic_id;
     uintptr_t io_apic_addr;
+    uintptr_t io_apic_virt_addr;
     uint32_t gsi_base;
 } IoApic;
 

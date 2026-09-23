@@ -19,6 +19,7 @@ extern uint64_t MEM_init(
 );
 extern uint64_t MEM_reclaim_region(struct memory_map mem_map, uint64_t region_type);
 extern uint64_t MEM_map_MMIO(uint64_t base, uint64_t size);
+extern uint64_t MEM_get_kernel_addresspace();
 
 extern void* kmalloc(size_t size);
 extern void* krealloc(void* ptr, size_t new_size);

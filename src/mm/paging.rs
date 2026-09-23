@@ -1,4 +1,4 @@
-use core::{panic, sync::atomic::Ordering::{self, Relaxed}};
+use core::{panic, sync::atomic::{Ordering::{self, Relaxed}}};
 use crate::{kernel_end, kernel_start, kernel_write_allowed_start, mm::{HHDM_OFFSET, LimineExecutableAddr, PhyAddr, VirtAddr}, spinlock::SpinLock};
 use super::{LimineMemMapEntry};
 
@@ -240,7 +240,10 @@ pub fn init(mem_map_entries: &[LimineMemMapEntry], executable_addr: LimineExecut
         PAGE_PRESENT | PAGE_WRITABLE | PAGE_GLOBAL
     );
 
+    super::KERNEL_ADDR_SPACE.store(pml4_addr_phys.0, Relaxed);
     unsafe { crate::switch_pdbr(pml4_addr_phys.0) };
+
     VirtAddr(kernel_virtual_end + 8 * 0x1000) // return the stack top
 
 }
+

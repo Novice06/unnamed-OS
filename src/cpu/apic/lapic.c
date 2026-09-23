@@ -51,7 +51,7 @@ void disable_pic() {
     outb(PIC2_DATA_PORT, 0xFF);
 }
 
-void LAPIC_init()
+void LAPIC_init_bootstrap()
 {
     disable_pic();
 
@@ -76,6 +76,14 @@ void LAPIC_init()
     LAPIC_write(0x380, 0);  // stop the count down
 
     SERIAL_printf("lapic ticks in 1ms 0x%x\n", LAPIC_TICKS_IN_1MS);
+}
+
+void LAPIC_init()
+{
+    // enable APIC by setting bit 8 (Software Enable) of SVR (0xF0)
+    // assign vector 0xFF for spurious interrupts
+    uint32_t spurious_vector_reg = LAPIC_read(0xF0);
+    LAPIC_write(0xF0, spurious_vector_reg | 0x100 | 0xFF);
 }
 
 uint32_t LAPIC_read(unsigned int reg)

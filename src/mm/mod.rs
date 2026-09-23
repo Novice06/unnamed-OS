@@ -1,4 +1,4 @@
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU64, Ordering::{self, Relaxed}};
 
 use crate::{mm::physical::PHYSICAL_MEMORY_ALLOCATOR, println};
 
@@ -44,6 +44,7 @@ pub struct LimineExecutableAddr {
 }
 
 static HHDM_OFFSET: AtomicU64 = AtomicU64::new(0);
+static KERNEL_ADDR_SPACE: AtomicU64 = AtomicU64::new(0);
 
 #[unsafe(no_mangle)]
 pub extern "C" fn MEM_init(
@@ -94,4 +95,9 @@ pub extern "C" fn MEM_map_MMIO(base: u64, size: u64) -> u64 {
     let VirtAddr(virt) = paging::map_mmio(PhyAddr(base), num_pages);
 
     virt
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn MEM_get_kernel_addresspace() -> u64 {
+    return KERNEL_ADDR_SPACE.load(Relaxed);
 }

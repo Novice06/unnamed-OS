@@ -42,30 +42,58 @@ void early_page_fault_handler(Registers* regs)
     hcf();
 }
 
-void test_lapic_timer(Registers* regs)
+int CORE_BOOTED = 1;    // the boostrap processesor
+
+void boot_ap_core(struct limine_mp_info *core)
 {
-    SERIAL_printf(".");
-    lapic_send_eoi();
+    GDT_init();
+    IDT_init();
+
+    uint64_t pdbr = MEM_get_kernel_addresspace();
+    switch_pdbr(pdbr);
+
+    LAPIC_init();
+
+    // allocate new stack here
+
+    __atomic_fetch_add(&CORE_BOOTED, 1, __ATOMIC_RELAXED);
+
+    SERIAL_printf("core %d, booted successfully\n", core->processor_id);
+    hcf();
 }
 
 void kmain_continue()
 {
-    // reclaime bootloader region
-    // MEM_reclaim_region(contiguous, LIMINE_MEMMAP_BOOTLOADER_RECLAIMABLE);
-
     if(!ACPI_parse(rsdp_request.response->address))
         SERIAL_printf("cannot parse acpi tables\n");
 
     // reclaime acpi
     // MEM_reclaim_region(contiguous, LIMINE_MEMMAP_ACPI_RECLAIMABLE);
 
-    LAPIC_init();
+    LAPIC_init_bootstrap();
     IOAPIC_init();
 
-    // test lapic timer
-    ISR_registerNewHandler(0x20, test_lapic_timer);
-    LAPIC_init_periodic_timer(0x20, 50);
-    enable_interrupts();
+    SERIAL_printf(
+        "bootstrap lapic id: %d, cpu count: %ld\n\n",
+        mp_request.response->bsp_lapic_id,
+        mp_request.response->cpu_count
+    );
+
+    for(uint32_t i = 0; i < mp_request.response->cpu_count; i++)
+    {
+        struct limine_mp_info *cpu = mp_request.response->cpus[i];
+        if(cpu->lapic_id == mp_request.response->bsp_lapic_id) continue;
+
+        __atomic_store_n(&cpu->goto_address, boot_ap_core, __ATOMIC_RELAXED);
+    }
+
+    while (CORE_BOOTED != mp_request.response->cpu_count)
+    {
+        __builtin_ia32_pause();
+    }
+
+    // reclaime bootloader region
+    // MEM_reclaim_region(contiguous, LIMINE_MEMMAP_BOOTLOADER_RECLAIMABLE);
 
     // Fetch the first framebuffer.
     struct limine_framebuffer *framebuffer = framebuffer_request.response->framebuffers[0];
@@ -107,11 +135,6 @@ void kmain()
     SERIAL_init();
 
     SERIAL_printf("hhdm offset 0x%lx\n", hhdm_request.response->offset);
-    SERIAL_printf(
-        "bootstrap lapic id: %d, cpu count: %ld\n\n",
-        mp_request.response->bsp_lapic_id,
-        mp_request.response->cpu_count
-    );
 
     GDT_init();
     IDT_init();

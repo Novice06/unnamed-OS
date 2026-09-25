@@ -172,7 +172,7 @@ pub fn alloc_pages(pml4_addr: VirtAddr, VirtAddr(virt): VirtAddr, num_pages: u64
     }
 }
 
-pub fn init(mem_map_entries: &[LimineMemMapEntry], executable_addr: LimineExecutableAddr) -> VirtAddr {
+pub fn init(mem_map_entries: &[LimineMemMapEntry], executable_addr: LimineExecutableAddr) {
 
     let hhdm = crate::mm::HHDM_OFFSET.load(Ordering::Relaxed);
 
@@ -230,20 +230,8 @@ pub fn init(mem_map_entries: &[LimineMemMapEntry], executable_addr: LimineExecut
         PAGE_PRESENT | PAGE_WRITABLE | PAGE_GLOBAL
     );
 
-    // map a new stack for the kernel
-    let kernel_size = length_non_writable + length_writable;
-    let kernel_virtual_end = executable_addr.virtual_base + (kernel_size * 0x1000);
-    alloc_pages(
-        pml4_addr_virt,
-        VirtAddr(kernel_virtual_end),
-        8, // 32 kb
-        PAGE_PRESENT | PAGE_WRITABLE | PAGE_GLOBAL
-    );
-
     super::KERNEL_ADDR_SPACE.store(pml4_addr_phys.0, Relaxed);
     unsafe { crate::switch_pdbr(pml4_addr_phys.0) };
-
-    VirtAddr(kernel_virtual_end + 8 * 0x1000) // return the stack top
 
 }
 

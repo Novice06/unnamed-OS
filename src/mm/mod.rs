@@ -51,7 +51,7 @@ pub extern "C" fn MEM_init(
     mem_map: LimineMemMap,
     limine_hhdm_offset: u64,
     executable_addr: LimineExecutableAddr,
-) -> u64 {
+) {
 
     HHDM_OFFSET.store(limine_hhdm_offset, Ordering::Relaxed); // use the same hhdm as limine
 
@@ -73,10 +73,17 @@ pub extern "C" fn MEM_init(
     }
 
     physical::init(memory_size as u32, mem_map_entries, limine_hhdm_offset);
-    let VirtAddr(stack_top) = paging::init(mem_map_entries, executable_addr);
+    paging::init(mem_map_entries, executable_addr);
+}
 
-    stack_top
-    // 0xdeadc0de
+#[unsafe(no_mangle)]
+pub extern "C" fn MEM_alloc_pages(virt_addr: u64, num_pages: u64, flags: u8) {
+    let hhdm = HHDM_OFFSET.load(Relaxed);
+    let pml4_addr = unsafe {
+        crate::get_pdbr()
+    };
+
+    paging::alloc_pages(VirtAddr(pml4_addr + hhdm), VirtAddr(virt_addr), num_pages, flags);
 }
 
 #[unsafe(no_mangle)]

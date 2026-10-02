@@ -1,9 +1,13 @@
 #include <stdarg.h>
 
+#include <spinlock.h>
+
 #include <utils/utils.h>
 #include "formatter.h"
 
 #define PORT 0x3f8          // COM1
+
+static Spinlock LOCK;
 
 int is_transmit_empty() {
    return inb(PORT + 5) & 0x20;
@@ -18,18 +22,26 @@ void SERIAL_putc(char c)
 
 void SERIAL_puts(char* str)
 {
+    spinlock_acquire(&LOCK);
+
     for(; *str != '\0'; str++)
         SERIAL_putc(*str);
+
+    spinlock_release(&LOCK);
 }
 
 void SERIAL_printf(char* fmt, ...)
 {
+    spinlock_acquire(&LOCK);
+
     va_list args;
     va_start(args, fmt);
 
     printf(SERIAL_putc, fmt, args);
 
     va_end(args);
+
+    spinlock_release(&LOCK);
 }
 
 void SERIAL_init()

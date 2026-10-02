@@ -88,6 +88,23 @@ read_msr:
     pop rbp
     ret
 
+global write_msr
+write_msr:
+    push rbp
+    mov rbp, rsp
+
+    mov ecx, edi
+
+    mov eax, esi
+    mov rdx, rsi
+    shr rdx, 32
+
+    wrmsr
+
+    mov rsp, rbp
+    pop rbp
+    ret
+
 global switch_pdbr
 switch_pdbr:
     push rbp

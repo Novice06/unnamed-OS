@@ -5,8 +5,6 @@ use super::LimineMemMapEntry;
 struct Bitmap {
     data: &'static mut [u8]
 }
-unsafe impl Send for Bitmap {}
-unsafe impl Sync for Bitmap {}
 
 impl Bitmap {
     fn from_memory_map(mem_map: &[LimineMemMapEntry], limine_hhdm_offset: u64, total_page_number: u32) -> Self {
@@ -125,9 +123,6 @@ struct FreePage {
 struct FreeList {
     head: *mut FreePage
 }
-
-unsafe impl Send for FreeList {}
-unsafe impl Sync for FreeList {}
 
 impl FreeList {
     fn from_bitmap(bitmap: &Bitmap, total_pages: u32) -> Self {

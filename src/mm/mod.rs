@@ -46,6 +46,10 @@ pub struct LimineExecutableAddr {
 static HHDM_OFFSET: AtomicU64 = AtomicU64::new(0);
 static KERNEL_ADDR_SPACE: AtomicU64 = AtomicU64::new(0);
 
+pub fn get_hhdm() -> u64 {
+    HHDM_OFFSET.load(Relaxed)
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn MEM_init(
     mem_map: LimineMemMap,

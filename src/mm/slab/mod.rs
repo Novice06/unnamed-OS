@@ -74,8 +74,7 @@ struct SlabClass {
     class_size: usize,
     total_slot: usize,
 }
-unsafe impl Sync for SlabClass {}
-unsafe impl Send for SlabClass {}
+
 impl SlabClass {
     const fn new(class_index: usize) -> Self {
         let class_size = 1usize << (class_index + 3);    // classes : 8, 16, 32, 64, 128, 256, 512, 1024, 2048

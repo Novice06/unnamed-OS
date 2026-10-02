@@ -7,8 +7,8 @@ pub struct SpinLock<T> {
     data: UnsafeCell<T>
 }
 
-unsafe impl<T: Send> Send for SpinLock<T> {}
-unsafe impl<T: Sync> Sync for SpinLock<T> {}
+unsafe impl<T> Send for SpinLock<T> {}
+unsafe impl<T> Sync for SpinLock<T> {}
 
 impl<T> SpinLock<T> {
     pub const fn new(data: T) -> Self {

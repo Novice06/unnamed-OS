@@ -17,8 +17,12 @@
 
 #include <mm/rust_interface.h>
 
-#define KERNEL_STACK_PAGES   8  // 32kb
+#include <task/rust_interface.h>
 
+#include "smp.h"
+#include "rust_interface.h"
+
+const uint32_t KERNEL_STACK_PAGES   =   8;  // 32kb
 extern uint8_t kernel_end;
 
 static struct limine_memmap_entry contiguous_entries[256];
@@ -46,40 +50,7 @@ void early_page_fault_handler(Registers* regs)
     hcf();
 }
 
-volatile uint8_t CORE_BOOTED = 1;    // the boostrap processesor
 
-void continue_boot_ap_core()
-{
-    SERIAL_printf("waiting for anything to do!\n");
-    hcf();
-}
-
-void boot_ap_core(struct limine_mp_info *core)
-{
-    GDT_init();
-    IDT_init();
-
-    uint64_t pdbr = MEM_get_kernel_addresspace();
-    switch_pdbr(pdbr);
-
-    LAPIC_init();
-
-    SERIAL_printf("core %d, booted successfully\n", core->processor_id);
-
-    uint8_t old_count = __atomic_fetch_add(&CORE_BOOTED, 1, __ATOMIC_ACQ_REL);
-
-    uint64_t kernel_virtual_end_page = ((uint64_t)&kernel_end + 4095 + old_count * KERNEL_STACK_PAGES * 0x1000) & ~(0xFFF);    // this way every cpu will have its own 32kb stack mapped
-    MEM_alloc_pages(
-        kernel_virtual_end_page,
-        KERNEL_STACK_PAGES,
-        PAGE_PRESENT | PAGE_WRITABLE | PAGE_GLOBAL
-    );
-
-    uint64_t stack_top = kernel_virtual_end_page + KERNEL_STACK_PAGES * 0x1000;
-    SERIAL_printf("new stack at: 0x%lx\n", stack_top);
-
-    switch_stack(stack_top, (void*)continue_boot_ap_core);
-}
 
 void kmain_continue()
 {
@@ -98,28 +69,20 @@ void kmain_continue()
         mp_request.response->cpu_count
     );
 
-    for(uint32_t i = 0; i < mp_request.response->cpu_count; i++)
-    {
-        struct limine_mp_info *cpu = mp_request.response->cpus[i];
-        if(cpu->lapic_id == mp_request.response->bsp_lapic_id) continue;
-
-        __atomic_store_n(&cpu->goto_address, boot_ap_core, __ATOMIC_RELAXED);
-    }
-
-    while (CORE_BOOTED != mp_request.response->cpu_count)
-    {
-        __builtin_ia32_pause();
-    }
+    init_smp();
+    TASK_init();
 
     // reclaime bootloader region
     // MEM_reclaim_region(contiguous, LIMINE_MEMMAP_BOOTLOADER_RECLAIMABLE);
+
+    extern void TASK_test();
+    TASK_test();
 
     // Fetch the first framebuffer.
     struct limine_framebuffer *framebuffer = framebuffer_request.response->framebuffers[0];
 
     SERIAL_printf("framebuffer at 0x%lx\n", framebuffer->address);
 
-    extern void draw_framebuffer(uint8_t* addr, int width, int heigh, int pitch);
     draw_framebuffer(
         framebuffer->address,
         framebuffer->width,

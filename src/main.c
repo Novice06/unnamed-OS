@@ -69,8 +69,9 @@ void kmain_continue()
         mp_request.response->cpu_count
     );
 
+    TASK_create_idle_process();
     init_smp();
-    TASK_init();
+    TASK_init_idle_thread();
 
     // reclaime bootloader region
     // MEM_reclaim_region(contiguous, LIMINE_MEMMAP_BOOTLOADER_RECLAIMABLE);

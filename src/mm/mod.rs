@@ -45,9 +45,14 @@ pub struct LimineExecutableAddr {
 
 static HHDM_OFFSET: AtomicU64 = AtomicU64::new(0);
 static KERNEL_ADDR_SPACE: AtomicU64 = AtomicU64::new(0);
+static PAGE_SIZE: AtomicU64 = AtomicU64::new(4096);
 
 pub fn get_hhdm() -> u64 {
     HHDM_OFFSET.load(Relaxed)
+}
+
+pub fn get_pagesize() -> u64 {
+    PAGE_SIZE.load(Relaxed)
 }
 
 #[unsafe(no_mangle)]

@@ -10,7 +10,7 @@ pub mod task;
 
 use core::panic::PanicInfo;
 
-use alloc::boxed::Box;
+use alloc::{boxed::Box, sync::Arc};
 
 use crate::{mm::VirtAddr, task::Thread};
 
@@ -38,8 +38,8 @@ pub struct CpuInfo {
     pub own_stack: VirtAddr,
     
     // rust specific members
-    pub current_thread: Option<Box<Thread>>,
-    pub idle_thread: Option<Box<Thread>>,
+    pub current_thread: Option<Arc<Thread>>,
+    pub idle_thread: Option<Arc<Thread>>,
 }
 
 impl CpuInfo {
@@ -76,8 +76,8 @@ unsafe extern "C" {
     fn SERIAL_putc(c: u8);
     fn switch_pdbr(pdbr: u64);
     fn get_pdbr() -> u64;
-    fn enable_interrupts();
-    fn disable_interrupts();
+    // fn enable_interrupts();
+    // fn disable_interrupts();
 
     static kernel_start: core::ffi::c_uchar;
     static kernel_write_allowed_start: core::ffi::c_uchar;

@@ -1,34 +1,49 @@
-use alloc::{boxed::Box, collections::VecDeque};
+use alloc::{collections::VecDeque, sync::Arc};
 
-use crate::{CpuInfo, mm::{PhyAddr, VirtAddr, get_hhdm, physical::PHYSICAL_MEMORY_ALLOCATOR}, println, spinlock::SpinLock, task::{TaskContext, Thread, context_switch}};
-
-
-static RUNQUEUE: SpinLock<VecDeque<Box<Thread>>> = SpinLock::new(VecDeque::new());
+use crate::{CpuInfo, mm::{PhyAddr, VirtAddr}, println, spinlock::SpinLock, task::{TASK_MANAGER, TaskContext, Thread, ThreadState, context_switch}};
 
 
-fn yield_task() {
-    let Some(next_thread) = RUNQUEUE.lock().pop_front() else {
+static RUNQUEUE: SpinLock<VecDeque<Arc<Thread>>> = SpinLock::new(VecDeque::new());
+
+pub fn schedule_thread(thread: Arc<Thread>) {
+    thread.set_state(ThreadState::READY);
+    RUNQUEUE.lock().push_back(thread);
+}
+
+pub fn yield_task() {
+    let this_cpu = CpuInfo::get_current();
+
+    let next_thread = if let Some(thread) = RUNQUEUE.lock().pop_front() {
+        thread
+    } else if this_cpu.current_thread.as_ref().unwrap().get_state() != ThreadState::RUNNING {
+        this_cpu.idle_thread.take().unwrap()
+    }
+    else {
         return;
     };
 
-    let this_cpu = CpuInfo::get_current();
-
-    // unsafe {
-    //     crate::disable_interrupts();
-    // }
-    
-    let mut old_thread = this_cpu.current_thread.take().unwrap();
+    let old_thread = this_cpu.current_thread.take().unwrap();
 
     let PhyAddr(cr3) = next_thread.process.addr_space;
-    let new_rsp = next_thread.rsp;
+    let new_rsp = unsafe {
+        *next_thread.rsp.get()
+    };
 
-    let old_rsp_ptr = &mut (*old_thread).rsp as *mut u64;
+    let old_rsp_ptr = old_thread.rsp.get();
 
     match this_cpu.idle_thread {
-        Some(_) => RUNQUEUE.lock().push_back(old_thread),
+        Some(_) => {
+            if old_thread.get_state() == ThreadState::RUNNING {
+                old_thread.set_state(ThreadState::READY);
+                RUNQUEUE.lock().push_back(old_thread);
+            } else if old_thread.get_state() == ThreadState::DEAD {
+                TASK_MANAGER.reap_thread(old_thread);
+            }
+        },
         None => this_cpu.idle_thread = Some(old_thread)
     }
 
+    next_thread.set_state(ThreadState::RUNNING);
     this_cpu.current_thread = Some(next_thread);
 
     // unsafe {
@@ -41,54 +56,38 @@ fn yield_task() {
 
 }
 
-fn spawn_thread(entry_point: VirtAddr) {
-
-    let PhyAddr(stack) = PHYSICAL_MEMORY_ALLOCATOR.lock().alloc_page().expect("out of memory");
-    let kernel_stack = VirtAddr(stack + get_hhdm());
-
-    let kernel_stack_top = kernel_stack.0 + 4096;
-    let context_ptr = (kernel_stack_top - core::mem::size_of::<TaskContext>() as u64) as *mut TaskContext;
-    let context = unsafe { &mut *context_ptr };
-
-    context.r12 = 0;
-    context.r13 = 0;
-    context.r14 = 0;
-    context.r15 = 0;
-    context.rbp = 0;
-    context.rbx = 0;
-    context.rip = entry_point.0;
-
-    RUNQUEUE
-    .lock()
-    .push_back(
-        Box::new(Thread::new(entry_point, context_ptr as u64, kernel_stack))
-    );
-}
-
 type Task = fn() -> !;
 
-fn TaskA() -> ! {
-    loop {
+fn task_a() -> ! {
+    for _ in 0..5 {
         println!("TaskA running");
         yield_task();
     }
+    super::exit_thread();
+    loop {
+        
+    }
 }
 
-fn TaskB() -> ! {
-    loop {
+fn task_b() -> ! {
+    for _ in 0..5 {
         println!("TaskB running");
         yield_task();
+    }
+    super::exit_thread();
+    loop {
+        
     }
 }
 
 #[unsafe(no_mangle)]
 extern "C" fn TASK_test() {
 
-    let taska_ptr: Task = TaskA;
-    let taskb_ptr: Task = TaskB;
+    let taska_ptr: Task = task_a;
+    let taskb_ptr: Task = task_b;
 
     println!("size of context {}", core::mem::size_of::<TaskContext>());
-    spawn_thread(VirtAddr(taska_ptr as u64));
-    spawn_thread(VirtAddr(taskb_ptr as u64));
+    super::spawn_thread(VirtAddr(taska_ptr as u64));
+    super::spawn_thread(VirtAddr(taskb_ptr as u64));
     yield_task();
 }

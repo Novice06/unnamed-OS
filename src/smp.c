@@ -25,7 +25,7 @@ volatile uint8_t CORE_BOOTED = 1;    // the boostrap processesor
 
 void continue_boot_ap_core()
 {
-    TASK_init();
+    TASK_init_idle_thread();
     SERIAL_printf("waiting for anything to do!\n");
     hcf();
 }

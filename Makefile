@@ -63,7 +63,10 @@ dependencies:
 		make -C limine-binary; \
 	fi
 
-image: build/unnamed.elf
+initrd:
+	cd initrd && find . -print0 -mindepth 1 | cpio --null -ov --format=newc > ../build/initrd.cpio
+
+image: build/unnamed.elf initrd
 	# Create an empty zeroed-out 64MiB image file.
 	dd if=/dev/zero of=build/image.hdd bs=1M count=64 conv=fsync
 
@@ -81,13 +84,14 @@ image: build/unnamed.elf
 
 	# Copy over the relevant files.
 	mcopy -i build/image.hdd@@1M build/unnamed.elf ::/boot
+	mcopy -i build/image.hdd@@1M build/initrd.cpio ::/boot
 	mcopy -i build/image.hdd@@1M limine.conf limine-binary/limine-bios.sys ::/boot/limine
 	mcopy -i build/image.hdd@@1M limine-binary/BOOTX64.EFI ::/EFI/BOOT
 	mcopy -i build/image.hdd@@1M limine-binary/BOOTIA32.EFI ::/EFI/BOOT
 
 run: image
 	qemu-system-x86_64 \
-	-m 128M \
+	-m 512M \
 	-drive if=pflash,format=raw,readonly=on,file=OVMF_CODE_4M.fd \
     -drive if=pflash,format=raw,file=OVMF_VARS_4M.fd \
     -drive if=ide,file=build/image.hdd,format=raw \
@@ -98,4 +102,4 @@ clean:
 	rm -rf build/
 	cargo clean
 
-.PHONY: all clean run image dependencies
+.PHONY: all clean run image dependencies initrd

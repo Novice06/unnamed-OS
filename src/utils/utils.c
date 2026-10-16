@@ -57,6 +57,37 @@ int memcmp(const void *s1, const void *s2, size_t n) {
     return 0;
 }
 
+int strcmp(const char *str1, const char *str2)
+{
+    while (*str1 == *str2)
+    {
+        if (*str1 == '\0')
+            return 0;
+
+        str1++;
+        str2++;
+    }
+
+    return (*str1 < *str2) ? -1 : 1;
+}
+
+int strncmp(const char *str1, const char *str2, int num)
+{
+    for(int i = 0; i < num; i++)
+    {
+        if ((*str1 != *str2))
+            return (*str1 < *str2) ? -1 : 1;
+
+        if(*str1 == '\0')
+            return 0;   // and of string
+
+        str1++;
+        str2++;
+    }
+
+    return 0;
+}
+
 // Halt and catch fire function.
 void hcf(void) {
     for (;;) {

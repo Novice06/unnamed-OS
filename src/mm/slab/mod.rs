@@ -1,5 +1,5 @@
 use core::{alloc::GlobalAlloc, sync::atomic::Ordering::Relaxed};
-use crate::{mm::{HHDM_OFFSET, PhyAddr, VirtAddr, physical::PHYSICAL_MEMORY_ALLOCATOR}, spinlock::SpinLock};
+use crate::{mm::{HHDM_OFFSET, PhyAddr, VirtAddr, physical::PHYSICAL_MEMORY_ALLOCATOR}, lock::spinlock::SpinLock};
 
 mod ffi;
 

@@ -4,7 +4,7 @@ use core::{cell::UnsafeCell, sync::atomic::{AtomicU8, AtomicUsize, Ordering::{Ac
 
 use alloc::{collections::BTreeMap, sync::{Arc, Weak}, vec::Vec};
 
-use crate::{CpuInfo, mm::{MEM_get_kernel_addresspace, PhyAddr, VirtAddr, get_hhdm, physical::PHYSICAL_MEMORY_ALLOCATOR}, println, spinlock::SpinLock, task::ThreadState::{READY, WAITING}};
+use crate::{CpuInfo, mm::{MEM_get_kernel_addresspace, PhyAddr, VirtAddr, get_hhdm, physical::PHYSICAL_MEMORY_ALLOCATOR}, println, lock::spinlock::SpinLock, task::ThreadState::{READY, WAITING}};
 
 unsafe extern "C" {
     fn context_switch(cr3: u64, old_rsp_ptr: *mut u64, new_rsp: u64);

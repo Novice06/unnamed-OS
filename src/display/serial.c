@@ -1,6 +1,6 @@
 #include <stdarg.h>
 
-#include <spinlock.h>
+#include <lock/spinlock.h>
 
 #include <utils/utils.h>
 #include "formatter.h"

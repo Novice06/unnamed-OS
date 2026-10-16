@@ -1,6 +1,6 @@
 use alloc::{collections::VecDeque, sync::Arc};
 
-use crate::{CpuInfo, mm::{PhyAddr, VirtAddr}, println, spinlock::SpinLock, task::{TASK_MANAGER, TaskContext, Thread, ThreadState, context_switch}};
+use crate::{CpuInfo, mm::{PhyAddr, VirtAddr}, println, lock::spinlock::SpinLock, task::{TASK_MANAGER, TaskContext, Thread, ThreadState, context_switch}};
 
 
 static RUNQUEUE: SpinLock<VecDeque<Arc<Thread>>> = SpinLock::new(VecDeque::new());

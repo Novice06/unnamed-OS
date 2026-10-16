@@ -19,6 +19,8 @@
 
 #include <task/rust_interface.h>
 
+#include <vfs/rust_interface.h>
+
 #include "smp.h"
 #include "rust_interface.h"
 
@@ -50,7 +52,7 @@ void early_page_fault_handler(Registers* regs)
     hcf();
 }
 
-
+struct limine_file* initrd;
 
 void kmain_continue()
 {
@@ -78,6 +80,11 @@ void kmain_continue()
 
     extern void TASK_test();
     TASK_test();
+
+    VFS_init(initrd->address, initrd->size);
+
+    extern void VFS_test();
+    VFS_test();
 
     // Fetch the first framebuffer.
     struct limine_framebuffer *framebuffer = framebuffer_request.response->framebuffers[0];
@@ -115,9 +122,22 @@ void kmain()
     if(mp_request.response == NULL || mp_request.response->cpu_count <= 0) // we shoud at least recieve the bootstrap processor
         hcf();
 
+    if (module_request.response == NULL || module_request.response->module_count != module_request.internal_module_count)
+        hcf();
+
     SERIAL_init();
 
     SERIAL_printf("hhdm offset 0x%lx\n", hhdm_request.response->offset);
+
+    // struct limine_file* initrd;
+    for(uint32_t i = 0; i < module_request.response->module_count; i++)
+    {
+        if(strncmp(module_request.response->modules[i]->path, "/boot/initrd.cpio", 7) == 0)
+        {
+            SERIAL_printf("initrd found at %s\n", module_request.response->modules[i]->path);
+            initrd = module_request.response->modules[i];
+        }
+    }
 
     GDT_init();
     IDT_init();

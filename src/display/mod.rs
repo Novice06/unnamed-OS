@@ -1,5 +1,5 @@
 use core::fmt::{self, Write};
-use crate::spinlock::SpinLock;
+use crate::lock::spinlock::SpinLock;
 
 pub struct Serial;
 

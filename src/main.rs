@@ -4,9 +4,10 @@
 extern crate alloc;
 
 pub mod mm;
-pub mod spinlock;
+pub mod lock;
 pub mod display;
 pub mod task;
+pub mod vfs;
 
 use core::panic::PanicInfo;
 

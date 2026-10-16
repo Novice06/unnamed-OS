@@ -1,5 +1,5 @@
 use core::{panic, sync::atomic::Ordering};
-use crate::{mm::PhyAddr, println, spinlock::SpinLock};
+use crate::{mm::PhyAddr, println, lock::spinlock::SpinLock};
 use super::LimineMemMapEntry;
 
 struct Bitmap {

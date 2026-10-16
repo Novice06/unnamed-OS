@@ -1,5 +1,5 @@
 use core::{panic, sync::atomic::{Ordering::{self, Relaxed}}};
-use crate::{kernel_end, kernel_start, kernel_write_allowed_start, mm::{HHDM_OFFSET, LimineExecutableAddr, PhyAddr, VirtAddr}, spinlock::SpinLock};
+use crate::{kernel_end, kernel_start, kernel_write_allowed_start, mm::{HHDM_OFFSET, LimineExecutableAddr, PhyAddr, VirtAddr}, lock::spinlock::SpinLock};
 use super::{LimineMemMapEntry};
 
 pub const PAGE_PRESENT: u8              = 1 << 0;

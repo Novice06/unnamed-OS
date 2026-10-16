@@ -41,6 +41,20 @@ volatile struct limine_mp_request mp_request = {
     .flags = 0, // we dont want the x2APIC
 };
 
+static const struct limine_internal_module initrd = {
+    .flags = LIMINE_INTERNAL_MODULE_REQUIRED,
+    .string = "initrd",
+    .path = "initrd.cpio"
+};
+
+__attribute__((used, section(".limine_requests")))
+volatile struct limine_module_request module_request = {
+    .id = LIMINE_MODULE_REQUEST_ID,
+    .revision = 0,
+    .internal_module_count = 1,
+    .internal_modules = &initrd
+};
+
 __attribute__((used, section(".limine_requests_start")))
 static volatile uint64_t limine_start_marker = LIMINE_REQUESTS_START_MARKER;
 

@@ -1,5 +1,5 @@
 use core::{panic, sync::atomic::Ordering};
-use crate::{mm::PhyAddr, println, lock::spinlock::SpinLock};
+use crate::{mm::PhyAddr, println, lock::spinlock::SpinLockIrqSave};
 use super::LimineMemMapEntry;
 
 struct Bitmap {
@@ -293,7 +293,7 @@ impl PhysMemAllocator {
     }
 }
 
-pub static PHYSICAL_MEMORY_ALLOCATOR: SpinLock<PhysMemAllocator> = SpinLock::new(PhysMemAllocator::new());
+pub static PHYSICAL_MEMORY_ALLOCATOR: SpinLockIrqSave<PhysMemAllocator> = SpinLockIrqSave::new(PhysMemAllocator::new());
 
 pub fn init(memory_size: u32, mem_map_entries: &[LimineMemMapEntry], limine_hhdm_offset: u64) {
     let mut allocator = PHYSICAL_MEMORY_ALLOCATOR.lock();

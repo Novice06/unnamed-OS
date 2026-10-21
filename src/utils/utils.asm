@@ -150,6 +150,18 @@ halt:
     pop rbp
     ret
 
+global get_rflags:
+get_rflags:
+    push rbp
+    mov rbp, rsp
+
+    pushfq
+    pop rax
+
+    mov rsp, rbp
+    pop rbp
+    ret
+
 global enable_interrupts
 enable_interrupts:
     push rbp

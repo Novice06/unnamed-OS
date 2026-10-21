@@ -39,6 +39,7 @@ pub struct CpuInfo {
     pub own_stack: VirtAddr,
     
     // rust specific members
+    pub previous_thread: Option<Arc<Thread>>,
     pub current_thread: Option<Arc<Thread>>,
     pub idle_thread: Option<Arc<Thread>>,
 }
@@ -60,6 +61,7 @@ pub extern "C" fn CPU_init(lapic_id: u32, processor_id: u32, stack_top: u64) -> 
         lapic_id,
         processor_id,
         own_stack: VirtAddr(stack_top),
+        previous_thread: None,
         current_thread: None,
         idle_thread: None,
     });
@@ -77,8 +79,9 @@ unsafe extern "C" {
     fn SERIAL_putc(c: u8);
     fn switch_pdbr(pdbr: u64);
     fn get_pdbr() -> u64;
-    // fn enable_interrupts();
-    // fn disable_interrupts();
+    fn get_rflags() -> u64;
+    fn enable_interrupts();
+    fn disable_interrupts();
 
     static kernel_start: core::ffi::c_uchar;
     static kernel_write_allowed_start: core::ffi::c_uchar;

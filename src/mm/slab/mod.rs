@@ -1,5 +1,5 @@
 use core::{alloc::GlobalAlloc, sync::atomic::Ordering::Relaxed};
-use crate::{mm::{HHDM_OFFSET, PhyAddr, VirtAddr, physical::PHYSICAL_MEMORY_ALLOCATOR}, lock::spinlock::SpinLock};
+use crate::{mm::{HHDM_OFFSET, PhyAddr, VirtAddr, physical::PHYSICAL_MEMORY_ALLOCATOR}, lock::spinlock::SpinLockIrqSave};
 
 mod ffi;
 
@@ -173,16 +173,16 @@ impl SlabClass {
     }
 }
 
-static SLAB: [SpinLock<SlabClass>; 9] = [
-    SpinLock::new(SlabClass::new(0)),
-    SpinLock::new(SlabClass::new(1)),
-    SpinLock::new(SlabClass::new(2)),
-    SpinLock::new(SlabClass::new(3)),
-    SpinLock::new(SlabClass::new(4)),
-    SpinLock::new(SlabClass::new(5)),
-    SpinLock::new(SlabClass::new(6)),
-    SpinLock::new(SlabClass::new(7)),
-    SpinLock::new(SlabClass::new(8)),
+static SLAB: [SpinLockIrqSave<SlabClass>; 9] = [
+    SpinLockIrqSave::new(SlabClass::new(0)),
+    SpinLockIrqSave::new(SlabClass::new(1)),
+    SpinLockIrqSave::new(SlabClass::new(2)),
+    SpinLockIrqSave::new(SlabClass::new(3)),
+    SpinLockIrqSave::new(SlabClass::new(4)),
+    SpinLockIrqSave::new(SlabClass::new(5)),
+    SpinLockIrqSave::new(SlabClass::new(6)),
+    SpinLockIrqSave::new(SlabClass::new(7)),
+    SpinLockIrqSave::new(SlabClass::new(8)),
 ];
 
 fn size_to_class_index(size: usize) -> Option<usize> {

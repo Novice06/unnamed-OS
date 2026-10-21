@@ -2,15 +2,17 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use core::cell::UnsafeCell;
 use core::ops::{Deref, DerefMut};
 
-pub struct SpinLock<T> {
+use crate::lock::crit_sec::CriticalGuard;
+
+pub struct SpinLockIrqSave<T> {
     lock: AtomicBool,
     data: UnsafeCell<T>
 }
 
-unsafe impl<T> Send for SpinLock<T> {}
-unsafe impl<T> Sync for SpinLock<T> {}
+unsafe impl<T> Send for SpinLockIrqSave<T> {}
+unsafe impl<T> Sync for SpinLockIrqSave<T> {}
 
-impl<T> SpinLock<T> {
+impl<T> SpinLockIrqSave<T> {
     pub const fn new(data: T) -> Self {
         Self {
             lock: AtomicBool::new(false),
@@ -18,20 +20,22 @@ impl<T> SpinLock<T> {
         }
     }
 
-    pub fn lock(&self) -> SpinLockGuard<'_, T> {
+    pub fn lock(&self) -> SpinLockIrqSaveGuard<'_, T> {
+        let guard = CriticalGuard::enter_critical_section();
         while self.lock.swap(true, Ordering::Acquire) {
             core::hint::spin_loop();
         }
 
-        SpinLockGuard { lock: &self }
+        SpinLockIrqSaveGuard { lock: &self, _critical_guard: guard }
     }
 }
 
-pub struct SpinLockGuard<'a, T> {
-    lock: &'a SpinLock<T>,
+pub struct SpinLockIrqSaveGuard<'a, T> {
+    lock: &'a SpinLockIrqSave<T>,
+    _critical_guard: CriticalGuard,
 }
 
-impl<T> Deref for SpinLockGuard<'_, T> {
+impl<T> Deref for SpinLockIrqSaveGuard<'_, T> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
         unsafe {
@@ -40,7 +44,7 @@ impl<T> Deref for SpinLockGuard<'_, T> {
     }
 }
 
-impl<T> DerefMut for SpinLockGuard<'_, T> {
+impl<T> DerefMut for SpinLockIrqSaveGuard<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe {
             &mut *self.lock.data.get()
@@ -48,7 +52,7 @@ impl<T> DerefMut for SpinLockGuard<'_, T> {
     }
 }
 
-impl<T> Drop for SpinLockGuard<'_, T> {
+impl<T> Drop for SpinLockIrqSaveGuard<'_, T> {
     fn drop(&mut self) {
         self.lock.lock.store(false, Ordering::Release);
     }

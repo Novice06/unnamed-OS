@@ -13,6 +13,7 @@ extern void switch_pdbr(uint64_t pdbr);
 extern uint64_t get_pdbr();
 extern void switch_stack(uint64_t new_stack, void* func);
 extern void halt();
+extern uint64_t get_rflags();
 extern void enable_interrupts();
 extern void disable_interrupts();
 

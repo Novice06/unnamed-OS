@@ -1,5 +1,5 @@
 use core::{panic, sync::atomic::{Ordering::{self, Relaxed}}};
-use crate::{kernel_end, kernel_start, kernel_write_allowed_start, mm::{HHDM_OFFSET, LimineExecutableAddr, PhyAddr, VirtAddr}, lock::spinlock::SpinLock};
+use crate::{kernel_end, kernel_start, kernel_write_allowed_start, mm::{HHDM_OFFSET, LimineExecutableAddr, PhyAddr, VirtAddr}, lock::spinlock::SpinLockIrqSave};
 use super::{LimineMemMapEntry};
 
 pub const PAGE_PRESENT: u8              = 1 << 0;
@@ -10,7 +10,7 @@ pub const PAGE_DISABLE_CACHE: u8        = 1 << 4;
 pub const PAGE_GLOBAL: u8               = 1 << 5;
 pub const PAGE_NO_EXECUTE: u8           = 1 << 6;
 
-static PAGING_LOCK: SpinLock<()> = SpinLock::new(());
+static PAGING_LOCK: SpinLockIrqSave<()> = SpinLockIrqSave::new(());
 
 struct PageEntry {
     entries: *mut u64

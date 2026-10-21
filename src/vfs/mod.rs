@@ -1,6 +1,6 @@
 use alloc::{sync::Arc, vec::Vec};
 
-use crate::{lock::{rwlock::RwLock, spinlock::SpinLock}, println, vfs::{cpio::CpioError, tempfs::TempFs}};
+use crate::{lock::{rwlock::RwLock, spinlock::SpinLockIrqSave}, println, vfs::{cpio::CpioError, tempfs::TempFs}};
 
 mod tempfs;
 mod cpio;
@@ -42,7 +42,7 @@ struct Mount {
     root: Arc<dyn Vnode>,
 }
 
-static ROOT_FILESYSTEM: SpinLock<Option<Arc<dyn Filesystem>>> = SpinLock::new(None);
+static ROOT_FILESYSTEM: SpinLockIrqSave<Option<Arc<dyn Filesystem>>> = SpinLockIrqSave::new(None);
 static MOUNT_POINTS: RwLock<Vec<Mount>> = RwLock::new(Vec::new());
 
 fn is_same_vnode(a: &Arc<dyn Vnode>, b: &Arc<dyn Vnode>) -> bool {

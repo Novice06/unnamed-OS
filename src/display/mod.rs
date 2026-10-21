@@ -1,5 +1,5 @@
 use core::fmt::{self, Write};
-use crate::lock::spinlock::SpinLock;
+use crate::lock::spinlock::SpinLockIrqSave;
 
 pub struct Serial;
 
@@ -18,7 +18,7 @@ impl Write for Serial {
     }
 }
 
-pub static SERIAL: SpinLock<Serial> = SpinLock::new(Serial);
+pub static SERIAL: SpinLockIrqSave<Serial> = SpinLockIrqSave::new(Serial);
 
 pub fn _print(args: fmt::Arguments) {
     let _ = SERIAL.lock().write_fmt(args);

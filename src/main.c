@@ -25,6 +25,7 @@
 #include "rust_interface.h"
 
 const uint32_t KERNEL_STACK_PAGES   =   8;  // 32kb
+bool kernel_ready = false;
 extern uint8_t kernel_end;
 
 static struct limine_memmap_entry contiguous_entries[256];
@@ -52,12 +53,6 @@ void early_page_fault_handler(Registers* regs)
     hcf();
 }
 
-void test_lapic_timer(Registers* regs)
-{
-    SERIAL_printf("tick every 50ms\n");
-    lapic_send_eoi();
-}
-
 struct limine_file* initrd;
 
 void kmain_continue()
@@ -71,10 +66,6 @@ void kmain_continue()
     LAPIC_init_bootstrap();
     IOAPIC_init();
 
-    ISR_registerNewHandler(0x20, test_lapic_timer);
-    LAPIC_init_periodic_timer(0x20, 10);
-    enable_interrupts();
-
     SERIAL_printf(
         "bootstrap lapic id: %d, cpu count: %ld\n\n",
         mp_request.response->bsp_lapic_id,
@@ -84,18 +75,27 @@ void kmain_continue()
     TASK_create_idle_process();
     init_smp();
     TASK_init_idle_thread();
-    TASK_init_preemptive_scheduler();
+    TASK_init_scheduler();
+
+    LAPIC_calibrate_timer();
+    LAPIC_init_default_timer();
+
+    LAPIC_lock_timer();
+    enable_interrupts();
+
+    kernel_ready = true;
+    LAPIC_unlock_timer();
 
     // reclaime bootloader region
     // MEM_reclaim_region(contiguous, LIMINE_MEMMAP_BOOTLOADER_RECLAIMABLE);
-
-    extern void TASK_stress();
-    TASK_stress();
 
     VFS_init(initrd->address, initrd->size);
 
     extern void VFS_test();
     VFS_test();
+
+    // reclaime modules and executable region
+    // MEM_reclaim_region(contiguous, LIMINE_MEMMAP_EXECUTABLE_AND_MODULES);
 
     // Fetch the first framebuffer.
     struct limine_framebuffer *framebuffer = framebuffer_request.response->framebuffers[0];

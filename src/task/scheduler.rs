@@ -116,41 +116,12 @@ pub fn thread_start() -> ! {
     super::exit_thread();
 }
 
-// type Task = fn() -> !;
-
-// fn task_a() -> ! {
-//     for _ in 0.. {
-//         println!("TaskA running");
-//         // yield_task();
-//     }
-//     super::exit_thread();
-// }
-
-// fn task_b() -> ! {
-//     for _ in 0.. {
-//         println!("TaskB running");
-//         // yield_task();
-//     }
-//     super::exit_thread();
-// }
-
-// #[unsafe(no_mangle)]
-// extern "C" fn TASK_test() {
-
-//     let taska_ptr: Task = task_a;
-//     let taskb_ptr: Task = task_b;
-
-//     super::spawn_thread(VirtAddr(taska_ptr as u64));
-//     super::spawn_thread(VirtAddr(taskb_ptr as u64));
-//     yield_task();
-// }
-
 extern "C" fn preempt(_regs: *mut crate::Registers) {
     unsafe { crate::lapic_send_eoi() };
     yield_task();
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn TASK_init_preemptive_scheduler() {
+extern "C" fn TASK_init_scheduler() {
     unsafe { ISR_registerNewHandler(0x20, preempt) }
 }

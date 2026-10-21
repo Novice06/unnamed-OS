@@ -1,5 +1,5 @@
 pub mod scheduler;
-mod stress;
+mod ffi;
 
 use core::{cell::UnsafeCell, sync::atomic::{AtomicU8, AtomicUsize, Ordering::{AcqRel, Acquire, Relaxed, Release}}};
 
@@ -292,7 +292,7 @@ pub fn exit_thread() -> ! {
     unreachable!("shouldnt get here !!");
 }
 
-fn spawn_thread(entry_point: VirtAddr) {
+pub fn spawn_thread(entry_point: VirtAddr) {
 
     let context = TaskContext {..Default::default()};
 

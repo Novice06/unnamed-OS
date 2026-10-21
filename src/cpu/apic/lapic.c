@@ -9,6 +9,8 @@
 
 #include <acpi/timer.h>
 
+#include <smp.h>
+
 #include "lapic.h"
 
 #define IA32_APIC_BASE 0x1B
@@ -34,7 +36,6 @@ typedef enum {
 }PIC_controlWord;
 
 static uint32_t volatile *LAPIC_BASE_ADDR;
-static uint32_t LAPIC_TICKS_IN_1MS;
 
 void disable_pic() {
     outb(PIC1_COMMAND_PORT, PIC_ICW1);
@@ -65,17 +66,6 @@ void LAPIC_init_bootstrap()
     // assign vector 0xFF for spurious interrupts
     uint32_t spurious_vector_reg = LAPIC_read(0xF0);
     LAPIC_write(0xF0, spurious_vector_reg | 0x100 | 0xFF);
-
-    // try to figure out how many ticks in 1ms this apic generate
-    LAPIC_write(0x3E0, DIVISOR_CONFIGURATION);  // divide the frequency by 16
-    LAPIC_write(0x380, 0xFFFFFFFF);     // count down from this
-
-    ACPI_timer_wait(1); // wait 1ms
-
-    LAPIC_TICKS_IN_1MS = 0xFFFFFFFF - LAPIC_read(0x390);  // read current count register and compute elapsed ticks
-    LAPIC_write(0x380, 0);  // stop the count down
-
-    SERIAL_printf("lapic ticks in 1ms 0x%x\n", LAPIC_TICKS_IN_1MS);
 }
 
 void LAPIC_init()
@@ -84,6 +74,17 @@ void LAPIC_init()
     // assign vector 0xFF for spurious interrupts
     uint32_t spurious_vector_reg = LAPIC_read(0xF0);
     LAPIC_write(0xF0, spurious_vector_reg | 0x100 | 0xFF);
+}
+
+void LAPIC_calibrate_timer() {
+    // try to figure out how many ticks in 1ms this apic generate
+    LAPIC_write(0x3E0, DIVISOR_CONFIGURATION);  // divide the frequency by 16
+    LAPIC_write(0x380, 0xFFFFFFFF);     // count down from this
+
+    ACPI_timer_wait(1); // wait 1ms
+
+    current_cpu()->lapic_ticks_in_1ms = 0xFFFFFFFF - LAPIC_read(0x390);  // read current count register and compute elapsed ticks
+    LAPIC_write(0x380, 0);  // stop the count down
 }
 
 uint32_t LAPIC_read(unsigned int reg)
@@ -124,7 +125,7 @@ void LAPIC_init_periodic_timer(uint8_t vector, uint32_t ms)
     uint32_t lvt = (1 << 17) | vector;
     LAPIC_write(0x320, lvt);
 
-    uint32_t ticks_count = LAPIC_TICKS_IN_1MS * ms;
+    uint32_t ticks_count = current_cpu()->lapic_ticks_in_1ms * ms;
     LAPIC_write(0x380, ticks_count);
 }
 
@@ -133,6 +134,26 @@ void LAPIC_init_1shot_timer(uint8_t vector, uint32_t ms)
     uint32_t lvt = vector;
     LAPIC_write(0x320, lvt);
 
-    uint32_t ticks_count = LAPIC_TICKS_IN_1MS * ms;
+    uint32_t ticks_count = current_cpu()->lapic_ticks_in_1ms * ms;
     LAPIC_write(0x380, ticks_count);
+}
+
+void LAPIC_init_default_timer() {
+    LAPIC_init_periodic_timer(0X20, 10);
+}
+
+void LAPIC_lock_timer()
+{
+    uint32_t lvt = LAPIC_read(0x320);
+    lvt |= (1u << 16);
+
+    LAPIC_write(0x320, lvt);
+}
+
+void LAPIC_unlock_timer()
+{
+    uint32_t lvt = LAPIC_read(0x320);
+    lvt &= ~(1u << 16);
+
+    LAPIC_write(0x320, lvt);
 }

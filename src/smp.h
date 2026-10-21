@@ -9,6 +9,7 @@ typedef struct CpuInfo
     struct CpuInfo* self;
     uint32_t lapic_id;
     uint32_t processor_id;
+    uint32_t lapic_ticks_in_1ms;
     void* own_stack;
     Thread* current_thread;
     Thread* idle_thread;

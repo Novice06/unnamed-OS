@@ -37,6 +37,7 @@ pub struct CpuInfo {
     pub self_ptr: *mut CpuInfo,
     pub lapic_id: u32,
     pub processor_id: u32,
+    pub lapic_ticks_in_1ms: u32,
     pub own_stack: VirtAddr,
     
     // rust specific members
@@ -61,6 +62,7 @@ pub extern "C" fn CPU_init(lapic_id: u32, processor_id: u32, stack_top: u64) -> 
         self_ptr: core::ptr::null_mut(),
         lapic_id,
         processor_id,
+        lapic_ticks_in_1ms: 0,
         own_stack: VirtAddr(stack_top),
         previous_thread: None,
         current_thread: None,

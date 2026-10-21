@@ -27,6 +27,7 @@ void continue_boot_ap_core()
 {
     TASK_init_idle_thread();
     SERIAL_printf("waiting for anything to do!\n");
+    enable_interrupts();
     hcf();
 }
 
@@ -39,6 +40,7 @@ void boot_ap_core(struct limine_mp_info *core)
     switch_pdbr(pdbr);
 
     LAPIC_init();
+    LAPIC_init_periodic_timer(0x20, 10);
 
     SERIAL_printf("core %d, booted successfully\n", core->processor_id);
 

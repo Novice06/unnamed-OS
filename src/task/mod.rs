@@ -1,10 +1,11 @@
 pub mod scheduler;
+mod stress;
 
 use core::{cell::UnsafeCell, sync::atomic::{AtomicU8, AtomicUsize, Ordering::{AcqRel, Acquire, Relaxed, Release}}};
 
 use alloc::{collections::BTreeMap, sync::{Arc, Weak}, vec::Vec};
 
-use crate::{CpuInfo, lock::{crit_sec::CriticalGuard, spinlock::SpinLockIrqSave}, mm::{MEM_get_kernel_addresspace, PhyAddr, VirtAddr, get_hhdm, physical::PHYSICAL_MEMORY_ALLOCATOR}, println, task::{ThreadState::SLEEPING, scheduler::{thread_start, wake_thread}}};
+use crate::{CpuInfo, lock::{crit_sec::CriticalGuard, spinlock::SpinLockIrqSave}, mm::{MEM_get_kernel_addresspace, PhyAddr, VirtAddr, get_hhdm, physical::PHYSICAL_MEMORY_ALLOCATOR}, task::{ThreadState::SLEEPING, scheduler::{thread_start, wake_thread}}};
 
 unsafe extern "C" {
     fn context_switch(cr3: u64, old_rsp_ptr: *mut u64, new_rsp: u64);
@@ -166,7 +167,7 @@ impl Drop for Thread {
     fn drop(&mut self) {
         let kernel_stack = PhyAddr(self.kernel_stack.0 - get_hhdm());
         PHYSICAL_MEMORY_ALLOCATOR.lock().free_page(kernel_stack);
-        println!("thread id: {} is dying !!", self.tid);
+        // println!("thread id: {} is dying !!", self.tid);
     }
 }
 
@@ -256,11 +257,16 @@ fn reaper_thread() {
             let _dead_batch: Vec<Arc<Thread>> = TASK_MANAGER.dead_threads.lock().drain(..).collect();
         }   // die here
 
-        if TASK_MANAGER.dead_threads.lock().is_empty() {
-            CriticalGuard::with(|| CpuInfo::get_current().current_thread.as_ref().unwrap().set_state(SLEEPING));
-            scheduler::yield_task();
-            continue;
+        let mut is_empty = false;
+        {
+            let dead_thread = TASK_MANAGER.dead_threads.lock();
+            if dead_thread.is_empty() {
+                CriticalGuard::with(|| CpuInfo::get_current().current_thread.as_ref().unwrap().set_state(SLEEPING));
+                is_empty = true;
+            }
         }
+
+        if is_empty { scheduler::yield_task(); }
     }
 }
 
@@ -277,8 +283,8 @@ pub fn exit_thread() -> ! {
             TASK_MANAGER.remove_process(current_thread.process.pid);
         }
 
-        current_thread.set_state(ThreadState::DEAD);
         TASK_MANAGER.remove_thread(current_thread.tid);
+        current_thread.set_state(ThreadState::DEAD);
     }
 
     scheduler::yield_task();

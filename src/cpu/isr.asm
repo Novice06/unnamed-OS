@@ -38,8 +38,6 @@ isr_common:
     mov ax, 0x10        ; use kernel data segment
     mov ds, ax
     mov es, ax
-    mov fs, ax
-    mov gs, ax
     
     mov rdi, rsp        ; pass pointer to stack to C, so we can access all the pushed information
     call ISR_handler
@@ -47,8 +45,6 @@ isr_common:
     pop rax             ; restore old segment
     mov ds, ax
     mov es, ax
-    mov fs, ax
-    mov gs, ax
 
     ; popa                ; pop what we pushed with pusha
     pop rdi

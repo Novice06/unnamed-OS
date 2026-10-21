@@ -52,6 +52,12 @@ void early_page_fault_handler(Registers* regs)
     hcf();
 }
 
+void test_lapic_timer(Registers* regs)
+{
+    SERIAL_printf("tick every 50ms\n");
+    lapic_send_eoi();
+}
+
 struct limine_file* initrd;
 
 void kmain_continue()
@@ -65,6 +71,10 @@ void kmain_continue()
     LAPIC_init_bootstrap();
     IOAPIC_init();
 
+    ISR_registerNewHandler(0x20, test_lapic_timer);
+    LAPIC_init_periodic_timer(0x20, 10);
+    enable_interrupts();
+
     SERIAL_printf(
         "bootstrap lapic id: %d, cpu count: %ld\n\n",
         mp_request.response->bsp_lapic_id,
@@ -74,12 +84,13 @@ void kmain_continue()
     TASK_create_idle_process();
     init_smp();
     TASK_init_idle_thread();
+    TASK_init_preemptive_scheduler();
 
     // reclaime bootloader region
     // MEM_reclaim_region(contiguous, LIMINE_MEMMAP_BOOTLOADER_RECLAIMABLE);
 
-    extern void TASK_test();
-    TASK_test();
+    extern void TASK_stress();
+    TASK_stress();
 
     VFS_init(initrd->address, initrd->size);
 

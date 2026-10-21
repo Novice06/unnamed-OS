@@ -1,6 +1,6 @@
 use alloc::{collections::VecDeque, sync::Arc};
 
-use crate::{CpuInfo, lock::{crit_sec::CriticalGuard, spinlock::SpinLockIrqSave}, mm::{PhyAddr, VirtAddr}, println, task::{TASK_MANAGER, Thread, ThreadState::{self, READY}, context_switch}};
+use crate::{CpuInfo, ISR_registerNewHandler, enable_interrupts, lock::{crit_sec::CriticalGuard, spinlock::SpinLockIrqSave}, mm::{PhyAddr, VirtAddr}, task::{TASK_MANAGER, Thread, ThreadState::{self, READY}, context_switch}};
 
 
 static RUNQUEUE: SpinLockIrqSave<VecDeque<Arc<Thread>>> = SpinLockIrqSave::new(VecDeque::new());
@@ -104,7 +104,7 @@ fn finish_context_switch() {
 pub fn thread_start() -> ! {
     CriticalGuard::with(finish_context_switch);
 
-    // TODO: enable interrupt here !!
+    unsafe { enable_interrupts(); }
 
     let VirtAddr(entry_point_ptr) = CriticalGuard::with(|| CpuInfo::get_current().current_thread.as_ref().unwrap().entry_point);
     let entry_point: fn() = unsafe {
@@ -116,31 +116,41 @@ pub fn thread_start() -> ! {
     super::exit_thread();
 }
 
-type Task = fn() -> !;
+// type Task = fn() -> !;
 
-fn task_a() -> ! {
-    for _ in 0..5 {
-        println!("TaskA running");
-        yield_task();
-    }
-    super::exit_thread();
-}
+// fn task_a() -> ! {
+//     for _ in 0.. {
+//         println!("TaskA running");
+//         // yield_task();
+//     }
+//     super::exit_thread();
+// }
 
-fn task_b() -> ! {
-    for _ in 0..5 {
-        println!("TaskB running");
-        yield_task();
-    }
-    super::exit_thread();
+// fn task_b() -> ! {
+//     for _ in 0.. {
+//         println!("TaskB running");
+//         // yield_task();
+//     }
+//     super::exit_thread();
+// }
+
+// #[unsafe(no_mangle)]
+// extern "C" fn TASK_test() {
+
+//     let taska_ptr: Task = task_a;
+//     let taskb_ptr: Task = task_b;
+
+//     super::spawn_thread(VirtAddr(taska_ptr as u64));
+//     super::spawn_thread(VirtAddr(taskb_ptr as u64));
+//     yield_task();
+// }
+
+extern "C" fn preempt(_regs: *mut crate::Registers) {
+    unsafe { crate::lapic_send_eoi() };
+    yield_task();
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn TASK_test() {
-
-    let taska_ptr: Task = task_a;
-    let taskb_ptr: Task = task_b;
-
-    super::spawn_thread(VirtAddr(taska_ptr as u64));
-    super::spawn_thread(VirtAddr(taskb_ptr as u64));
-    yield_task();
+extern "C" fn TASK_init_preemptive_scheduler() {
+    unsafe { ISR_registerNewHandler(0x20, preempt) }
 }

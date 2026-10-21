@@ -19,14 +19,15 @@ use crate::{mm::VirtAddr, task::Thread};
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     unsafe {
+        disable_interrupts();
         println!("RUST KERNEL PANIC");
+        println!("on CPU id: {}", CpuInfo::get_current().processor_id);
 
         if let Some(location) = info.location() {
             println!("Location: {}:{}:{}", location.file(), location.line(), location.column());
         }
 
         println!("Message: {}", info.message());
-
         hcf();
     };
 }
@@ -74,6 +75,17 @@ pub extern "C" fn CPU_init(lapic_id: u32, processor_id: u32, stack_top: u64) -> 
     cpu_ptr
 }
 
+#[repr(C, packed)]
+struct Registers {
+    // in the reverse order they are pushed:
+    ds: u64,                                      // data segment pushed by us
+    rdi: u64, rsi: u64, rbp: u64, rbx: u64, rdx: u64, rcx: u64, rax: u64, // pusha
+    interrupt: u64, error: u64,                   // we push interrupt, error is pushed automatically (or our dummy)
+    rip: u64, cs: u64, rflags: u64, rsp: u64, ss: u64, // pushed automatically by CPU
+}
+
+type ISRHandler = extern "C" fn(regs: *mut Registers);
+
 unsafe extern "C" {
     fn hcf() -> !;
     fn SERIAL_putc(c: u8);
@@ -82,6 +94,9 @@ unsafe extern "C" {
     fn get_rflags() -> u64;
     fn enable_interrupts();
     fn disable_interrupts();
+    fn lapic_send_eoi();
+
+    fn ISR_registerNewHandler(interrupt: i32, handler: ISRHandler);
 
     static kernel_start: core::ffi::c_uchar;
     static kernel_write_allowed_start: core::ffi::c_uchar;

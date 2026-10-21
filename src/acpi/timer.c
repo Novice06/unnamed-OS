@@ -36,10 +36,25 @@ void init_timer(struct FADT *fadt)
 
     if(fadt->header.revision >= 2 && fadt->X_PMTimerBlock.Address != 0)
     {
-        timer.is_mmio = true;
-        timer.addr_or_io = fadt->X_PMTimerBlock.Address;
+        switch (fadt->X_PMTimerBlock.AddressSpace) {
+        case 1:
+            timer.is_mmio = false;
+            timer.addr_or_io = fadt->X_PMTimerBlock.Address;
+            break;
 
-        timer.virt_addr = MEM_map_MMIO(timer.addr_or_io, 4096);
+        case 0:
+            timer.is_mmio = true;
+            timer.addr_or_io = fadt->X_PMTimerBlock.Address;
+            timer.virt_addr = MEM_map_MMIO(timer.addr_or_io, 4096);
+            break;
+
+        default:
+            SERIAL_printf(
+                "Unsupported PM Timer address space: %u\n",
+                fadt->X_PMTimerBlock.AddressSpace
+            );
+            return;
+        }
     }
 
     if (fadt->Flags & (1<<8)) timer.is_32bit = true;

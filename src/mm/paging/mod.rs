@@ -2,6 +2,8 @@ use core::{panic, sync::atomic::{Ordering::{self, Relaxed}}};
 use crate::{kernel_end, kernel_start, kernel_write_allowed_start, mm::{HHDM_OFFSET, LimineExecutableAddr, PhyAddr, VirtAddr}, lock::spinlock::SpinLockIrqSave};
 use super::{LimineMemMapEntry};
 
+pub mod vmalloc;
+
 pub const PAGE_PRESENT: u8              = 1 << 0;
 pub const PAGE_WRITABLE: u8             = 1 << 1;
 pub const PAGE_USER: u8                 = 1 << 2;
@@ -9,6 +11,8 @@ pub const PAGE_WRITE_THROUGH_CACHE: u8  = 1 << 3;
 pub const PAGE_DISABLE_CACHE: u8        = 1 << 4;
 pub const PAGE_GLOBAL: u8               = 1 << 5;
 pub const PAGE_NO_EXECUTE: u8           = 1 << 6;
+
+pub const PAGE_DEFAULT: u8              = PAGE_PRESENT | PAGE_WRITABLE;
 
 static PAGING_LOCK: SpinLockIrqSave<()> = SpinLockIrqSave::new(());
 
@@ -170,6 +174,12 @@ pub fn alloc_pages(pml4_addr: VirtAddr, VirtAddr(virt): VirtAddr, num_pages: u64
             flags
         );
     }
+}
+
+pub fn alloc_pages_in_pdbr(addr: VirtAddr, num_pages: u64, flags: u8) {
+    let pml4_addr = unsafe { VirtAddr(crate::get_pdbr() + HHDM_OFFSET.load(Relaxed)) };
+
+    alloc_pages(pml4_addr, addr, num_pages, flags);
 }
 
 pub fn init(mem_map_entries: &[LimineMemMapEntry], executable_addr: LimineExecutableAddr) {

@@ -145,11 +145,11 @@ impl Thread {
         })
     }
 
-    fn get_state(&self) -> ThreadState {
+    pub fn get_state(&self) -> ThreadState {
         ThreadState::from_u8(self.state.load(Acquire))
     }
 
-    fn set_state(&self, state: ThreadState) {
+    pub fn set_state(&self, state: ThreadState) {
         self.state.store(state as u8, Release);
     }
 

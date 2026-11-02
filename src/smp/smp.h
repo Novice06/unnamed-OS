@@ -11,6 +11,9 @@ typedef struct CpuInfo
     uint32_t processor_id;
     uint32_t lapic_ticks_in_1ms;
     void* own_stack;
+
+    // rust specific member (there might be more since I'm not updating this struct)
+    // check `smp/mod.rs` for more !
     Thread* current_thread;
     Thread* idle_thread;
 }CpuInfo;

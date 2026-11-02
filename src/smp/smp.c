@@ -15,13 +15,26 @@
 #include <utils/utils.h>
 
 #include "smp.h"
-#include "rust_interface.h"
 
 #define IA32_GS_Base 0xC0000101
+
+#define MAX_CPU 256
+
+struct LapicIds
+{
+    uint8_t* pointer;
+    uint32_t size;
+};
+
+extern void SMP_init_IPI(); // smp/mod.rs
+extern CpuInfo* CPU_init(uint32_t lapic_id, uint32_t processor_id, uint64_t stack_top);
 
 extern bool kernel_ready;
 extern const uint32_t KERNEL_STACK_PAGES;
 extern uint8_t kernel_end;
+
+CpuInfo* CPUS[MAX_CPU];
+struct LapicIds LAPIC_IDS;
 
 volatile uint8_t CORE_BOOTED = 1;    // the boostrap processesor
 
@@ -86,9 +99,16 @@ CpuInfo* current_cpu()
     return cpu;
 }
 
+CpuInfo* get_cpu(uint8_t lapic_id) 
+{
+    return CPUS[lapic_id];
+}
+
 void init_cpu_struct(uint32_t lapic_id, uint32_t processor_id, uint64_t stack_top)
 {
     CpuInfo *this_cpu = CPU_init(lapic_id, processor_id, stack_top);
+
+    CPUS[this_cpu->lapic_id] = this_cpu;
 
     // save this struct to GS.base
     write_msr(IA32_GS_Base, this_cpu);
@@ -96,9 +116,16 @@ void init_cpu_struct(uint32_t lapic_id, uint32_t processor_id, uint64_t stack_to
 
 void init_smp()
 {
+    SMP_init_IPI(); // init inter-processor interrupt subsystem
+
+    LAPIC_IDS.pointer = kmalloc(mp_request.response->cpu_count);
+    LAPIC_IDS.size = mp_request.response->cpu_count;
+
     for(uint32_t i = 0; i < mp_request.response->cpu_count; i++)
     {
         struct limine_mp_info *cpu = mp_request.response->cpus[i];
+
+        ((uint8_t*)LAPIC_IDS.pointer)[i] = (uint8_t)cpu->lapic_id;
 
         if(cpu->lapic_id == mp_request.response->bsp_lapic_id)
         {

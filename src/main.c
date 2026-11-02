@@ -21,8 +21,7 @@
 
 #include <vfs/rust_interface.h>
 
-#include "smp.h"
-#include "rust_interface.h"
+#include <smp/smp.h>
 
 const uint32_t KERNEL_STACK_PAGES   =   8;  // 32kb
 bool kernel_ready = false;
@@ -102,6 +101,7 @@ void kmain_continue()
 
     SERIAL_printf("framebuffer at 0x%lx\n", framebuffer->address);
 
+    extern void draw_framebuffer(uint8_t* addr, int width, int heigh, int pitch);
     draw_framebuffer(
         framebuffer->address,
         framebuffer->width,

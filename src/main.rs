@@ -3,6 +3,7 @@
 
 extern crate alloc;
 
+pub mod smp;
 pub mod mm;
 pub mod lock;
 pub mod display;
@@ -11,9 +12,7 @@ pub mod vfs;
 
 use core::panic::PanicInfo;
 
-use alloc::{boxed::Box, sync::Arc};
-
-use crate::{mm::VirtAddr, task::Thread};
+use crate::smp::CpuInfo;
 
 /// This function is called on panic.
 #[panic_handler]
@@ -28,53 +27,11 @@ fn panic(info: &PanicInfo) -> ! {
         }
 
         println!("Message: {}", info.message());
+
+        smp::send_ipi_allbutself(smp::IpiAction::HALT);
+
         hcf();
     };
-}
-
-#[repr(C)] // because we want some member of our struct to be accessible from C
-pub struct CpuInfo {
-    pub self_ptr: *mut CpuInfo,
-    pub lapic_id: u32,
-    pub processor_id: u32,
-    pub lapic_ticks_in_1ms: u32,
-    pub own_stack: VirtAddr,
-    
-    // rust specific members
-    pub previous_thread: Option<Arc<Thread>>,
-    pub current_thread: Option<Arc<Thread>>,
-    pub idle_thread: Option<Arc<Thread>>,
-}
-
-impl CpuInfo {
-    fn get_current() -> &'static mut CpuInfo {
-        unsafe {
-            let cpu: *mut CpuInfo;
-            core::arch::asm!("mov {}, gs:0", out(reg) cpu);
-            &mut *cpu
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn CPU_init(lapic_id: u32, processor_id: u32, stack_top: u64) -> *mut CpuInfo {
-    let cpu_box = Box::new(CpuInfo {
-        self_ptr: core::ptr::null_mut(),
-        lapic_id,
-        processor_id,
-        lapic_ticks_in_1ms: 0,
-        own_stack: VirtAddr(stack_top),
-        previous_thread: None,
-        current_thread: None,
-        idle_thread: None,
-    });
-
-    let cpu_ptr = Box::into_raw(cpu_box);
-    unsafe {
-        (*cpu_ptr).self_ptr = cpu_ptr;
-    }
-
-    cpu_ptr
 }
 
 #[repr(C, packed)]
@@ -134,4 +91,6 @@ pub extern "C" fn draw_framebuffer(
             }
         }
     }
+
+    panic!("just panicking for no reason");
 }

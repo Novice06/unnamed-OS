@@ -9,7 +9,7 @@
 
 #include <acpi/timer.h>
 
-#include <smp.h>
+#include <smp/smp.h>
 
 #include "lapic.h"
 
@@ -156,4 +156,15 @@ void LAPIC_unlock_timer()
     lvt &= ~(1u << 16);
 
     LAPIC_write(0x320, lvt);
+}
+
+void LAPIC_send_ipi(uint8_t vector, uint8_t target)
+{
+    uint32_t icr_high = target << 24;
+    LAPIC_write(0x310, icr_high);
+
+    uint32_t icr_low = (uint32_t)vector | (1 << 14);
+    LAPIC_write(0x300, icr_low);
+
+    while (LAPIC_read(0x300) & (1 << 12)) __builtin_ia32_pause(); // wait til its received
 }

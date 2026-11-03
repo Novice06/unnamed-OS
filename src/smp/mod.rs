@@ -140,7 +140,7 @@ extern "C" fn ipi_handler(_regs: *mut crate::Registers) {
     }
 
     ipi_queue.clear();
-    unsafe { crate::lapic_send_eoi() };    println!("completed");
+    unsafe { crate::lapic_send_eoi() };
 }
 
 pub fn send_ipi_allbutself(action: IpiAction) {
@@ -168,7 +168,7 @@ pub fn send_ipi_allbutself(action: IpiAction) {
     }
 }
 
-pub fn send_ipi_all(action: IpiAction) {
+pub fn send_broadcast_ipi(action: IpiAction) {
     let completion = Completion {remaining: AtomicUsize::new(get_lapic_ids().len())};
     
     CriticalGuard::with(|| {

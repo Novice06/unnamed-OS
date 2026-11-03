@@ -116,6 +116,9 @@ pub struct Thread {
 }
 
 impl Thread {
+
+    const KERNEL_STACK_PAGES: usize = 32;
+
     pub fn create_idle(stack: VirtAddr, idle_proc: Arc<Process>, id: TID) -> Self {
 
         Self { tid: id, state: AtomicU8::new(ThreadState::RUNNING as u8), process: idle_proc, rsp: UnsafeCell::new(0), kernel_stack: stack, entry_point: VirtAddr(0) }
@@ -123,8 +126,7 @@ impl Thread {
 
     pub fn new(entry_point: VirtAddr, context: &TaskContext, process: Arc<Process>, id: TID) -> Result<Self, &'static str> {
 
-        let PhyAddr(stack) = PHYSICAL_MEMORY_ALLOCATOR.lock().alloc_page().ok_or("out of memory")?;
-        let kernel_stack = VirtAddr(stack + get_hhdm());
+        let kernel_stack = crate::mm::paging::vmalloc::VMALLOC.alloc_blocks(Self::KERNEL_STACK_PAGES).ok_or("out of memory")?;
 
         let stack_context_ptr = {
             let kernel_stack_top = kernel_stack.0 + crate::mm::get_pagesize();
@@ -165,8 +167,7 @@ impl Thread {
 
 impl Drop for Thread {
     fn drop(&mut self) {
-        let kernel_stack = PhyAddr(self.kernel_stack.0 - get_hhdm());
-        PHYSICAL_MEMORY_ALLOCATOR.lock().free_page(kernel_stack);
+        crate::mm::paging::vmalloc::VMALLOC.free_blocks(self.kernel_stack, Self::KERNEL_STACK_PAGES);
         // println!("thread id: {} is dying !!", self.tid);
     }
 }

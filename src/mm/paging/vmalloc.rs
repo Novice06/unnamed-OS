@@ -26,7 +26,7 @@ impl VmallocManager {
         self.free_blocks.lock().push(FreeBlock { start: 0, count: size / 4 });
     }
     
-    pub fn alloc_blocks(&mut self, num: usize) -> Option<VirtAddr> {
+    pub fn alloc_blocks(&self, num: usize) -> Option<VirtAddr> {
 
         let block_num = {
             let mut free_blocks = self.free_blocks.lock();
@@ -47,7 +47,6 @@ impl VmallocManager {
             if block.count == num {
                 free_blocks.remove(best_idx);
             } else {
-                // On rétrécit le bloc (il reste du rab)
                 block.start += num;
                 block.count -= num;
             }
@@ -61,8 +60,9 @@ impl VmallocManager {
         Some(ret_addr)
     }
 
-    pub fn free_blocks(&mut self, addr: VirtAddr, count: usize) {
-        // TODO: DEALLOC PAGES HERE FIRST !!
+    pub fn free_blocks(&self, addr: VirtAddr, count: usize) {
+        // the order is important here !
+        super::dealloc_pages_in_pdbr(addr, count as u64);
 
         let mut free_blocks = self.free_blocks.lock();
         
@@ -107,7 +107,7 @@ impl VmallocManager {
     }
 }
 
-static VMALLOC: VmallocManager = VmallocManager { 
+pub static VMALLOC: VmallocManager = VmallocManager { 
     start_addr: AtomicU64::new(0), 
     total_block: AtomicUsize::new(0), 
     free_blocks: SpinLockIrqSave::new(Vec::new())

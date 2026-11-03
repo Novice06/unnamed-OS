@@ -1,5 +1,7 @@
 use core::{panic, sync::atomic::{Ordering::{self, Relaxed}}};
-use crate::{kernel_end, kernel_start, kernel_write_allowed_start, mm::{HHDM_OFFSET, LimineExecutableAddr, PhyAddr, VirtAddr}, lock::spinlock::SpinLockIrqSave};
+use alloc::vec::Vec;
+
+use crate::{kernel_end, kernel_start, kernel_write_allowed_start, lock::spinlock::SpinLockIrqSave, mm::{HHDM_OFFSET, LimineExecutableAddr, PhyAddr, VirtAddr, physical}, smp};
 use super::{LimineMemMapEntry};
 
 pub mod vmalloc;
@@ -111,6 +113,44 @@ impl PageEntry {
 
         pml1.is_present(((addr >> 12) & 0x1FF) as usize)
     }
+
+    fn get_physical(&self, index: usize) -> Option<PhyAddr> {
+        if !self.is_present(index) {
+            return None;
+        }
+        let entry = self.get(index);
+        Some(PhyAddr(entry & 0x000FFFFFFFFFF000))
+    }
+
+    fn clear_entry(&mut self, index: usize) {
+        if index < 512 {
+            unsafe {
+                core::ptr::write_volatile(self.entries.add(index), 0);
+            }
+        }
+    }
+
+    fn _is_empty(&self) -> bool {
+        for i in 0..512 {
+            if self.is_present(i) {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn _destroy(self, parent: &mut Self, idx: usize) -> Result<(), Self> {
+
+        if !self._is_empty() {
+            return Err(self);
+        }
+
+        let self_addr = parent.get_physical(idx).unwrap();
+        physical::PHYSICAL_MEMORY_ALLOCATOR.lock().free_page(self_addr);
+        parent.clear_entry(idx);
+
+        Ok(())
+    }
 }
 
 // uint64_t pml4 = (virt >> 39) & 0x1FF;
@@ -134,6 +174,41 @@ fn map_pages(pml4_addr: VirtAddr, VirtAddr(virt): VirtAddr, PhyAddr(phys): PhyAd
 
         pml1.set(((addr >> 12) & 0x1FF) as usize, phys + 0x1000 * i, flags);
     }
+}
+
+fn unmap_pages(pml4_addr: VirtAddr, VirtAddr(virt): VirtAddr, num_pages: u64) -> Vec<PhyAddr> {
+    
+    // ironically this function need a heap since its uses a vector to collect frames
+    // therefore one should use this function for a very specific reason
+    // TODO: impl a similar function that directly deallocate physical frame
+
+    // we suppose the caller has the lock
+
+    let mut pml4 = PageEntry::from(pml4_addr);
+    let mut frames = Vec::new();
+
+    for i in 0..num_pages {
+        let addr = virt + 0x1000 * i;
+        
+        let pml4_idx = ((addr >> 39) & 0x1FF) as usize;
+        let pml3_idx = ((addr >> 30) & 0x1FF) as usize;
+        let pml2_idx = ((addr >> 21) & 0x1FF) as usize;
+        let pml1_idx = ((addr >> 12) & 0x1FF) as usize;
+
+        let Some(mut pml3) = pml4.from_previous_level(pml4_idx, false) else { continue; };
+        let Some(mut pml2) = pml3.from_previous_level(pml3_idx, false) else { continue; };
+        let Some(mut pml1) = pml2.from_previous_level(pml2_idx, false) else { continue; };
+
+        if let Some(phys) = pml1.get_physical(pml1_idx) {
+            frames.push(phys);
+            pml1.clear_entry(pml1_idx);
+        }
+
+        // let _ = pml1.destroy(&mut pml2, pml2_idx);
+        // let _ = pml2.destroy(&mut pml3, pml3_idx);
+    }
+
+    frames
 }
 
 pub fn map_mmio(PhyAddr(phys): PhyAddr, num_pages: u64) -> VirtAddr{
@@ -176,10 +251,34 @@ pub fn alloc_pages(pml4_addr: VirtAddr, VirtAddr(virt): VirtAddr, num_pages: u64
     }
 }
 
+pub fn dealloc_pages(pml4_addr: VirtAddr, virt: VirtAddr, num_pages: u64) {
+    
+    let frames = {
+        let _guard = PAGING_LOCK.lock();
+        unmap_pages(pml4_addr, virt, num_pages)
+    };
+
+    // sending an ipi to invalidate tlb including my self to prevent a case where before sending the ipi
+    // we get preempted and another cpu send the ipi and then again we get preempted (for some reason idk)
+    // so the cpu that sent the ipi never gets to tlb flush !
+    crate::smp::send_broadcast_ipi(smp::IpiAction::TlbFlush { start: virt, pages: num_pages as usize });
+
+    let mut pmm = super::physical::PHYSICAL_MEMORY_ALLOCATOR.lock();
+    for frame in frames {
+        pmm.free_page(frame);
+    }
+}
+
 pub fn alloc_pages_in_pdbr(addr: VirtAddr, num_pages: u64, flags: u8) {
     let pml4_addr = unsafe { VirtAddr(crate::get_pdbr() + HHDM_OFFSET.load(Relaxed)) };
 
     alloc_pages(pml4_addr, addr, num_pages, flags);
+}
+
+pub fn dealloc_pages_in_pdbr(virt: VirtAddr, num_pages: u64) {
+    let pml4_addr = unsafe { VirtAddr(crate::get_pdbr() + HHDM_OFFSET.load(Relaxed)) };
+
+    dealloc_pages(pml4_addr, virt, num_pages);
 }
 
 pub fn init(mem_map_entries: &[LimineMemMapEntry], executable_addr: LimineExecutableAddr) {
@@ -239,6 +338,15 @@ pub fn init(mem_map_entries: &[LimineMemMapEntry], executable_addr: LimineExecut
         length_writable,
         PAGE_PRESENT | PAGE_WRITABLE | PAGE_GLOBAL
     );
+
+    // giving 512 Gio of virt memory to vmalloc
+    const VMALLOC_START: u64 = 0xFFFF_C000_0000_0000;
+    const VMALLOC_END: u64 = 0xFFFF_C080_0000_0000;
+
+    //map 3rd level for now its just 1 level which will cover the entire 512Gio addr space
+    PageEntry::from(pml4_addr_virt).from_previous_level(384, true).unwrap();
+
+    vmalloc::init(VirtAddr(VMALLOC_START), VirtAddr(VMALLOC_END));
 
     super::KERNEL_ADDR_SPACE.store(pml4_addr_phys.0, Relaxed);
     unsafe { crate::switch_pdbr(pml4_addr_phys.0) };

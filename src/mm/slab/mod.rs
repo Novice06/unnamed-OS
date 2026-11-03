@@ -207,12 +207,16 @@ unsafe impl GlobalAlloc for KernelAllocator {
             SLAB[class_index].lock().alloc()
         } else {
             let num_pages = (max_size + 4095) / 4096;
-            if num_pages > 1 {todo!("time to implement multiple page allocator")}
 
-            let PhyAddr(addr) = PHYSICAL_MEMORY_ALLOCATOR.lock().alloc_page().expect("out of memory");
-            let hhdm = HHDM_OFFSET.load(Relaxed);
+            if num_pages > 1 {
+                let VirtAddr(addr) = crate::mm::paging::vmalloc::VMALLOC.alloc_blocks(num_pages).unwrap();
+                addr as *mut u8
+            } else {
+                let PhyAddr(addr) = PHYSICAL_MEMORY_ALLOCATOR.lock().alloc_page().expect("out of memory");
+                let hhdm = HHDM_OFFSET.load(Relaxed);
 
-            (addr + hhdm) as *mut u8
+                (addr + hhdm) as *mut u8
+            }
         }
     }
 
@@ -230,12 +234,15 @@ unsafe impl GlobalAlloc for KernelAllocator {
             SLAB[class_index].lock().free(ptr, header);
         } else {
             let num_pages = (required_size + 4095) / 4096;
-            if num_pages > 1 {todo!("time to implement multiple page allocator")}
-            
-            let hhdm = HHDM_OFFSET.load(Relaxed);
-            let phys_addr = page_addr - hhdm;
 
-            PHYSICAL_MEMORY_ALLOCATOR.lock().free_page(PhyAddr(phys_addr));
+            if num_pages > 1 {
+                crate::mm::paging::vmalloc::VMALLOC.free_blocks(VirtAddr(page_addr), num_pages);
+            } else {
+                let hhdm = HHDM_OFFSET.load(Relaxed);
+                let phys_addr = page_addr - hhdm;
+
+                PHYSICAL_MEMORY_ALLOCATOR.lock().free_page(PhyAddr(phys_addr));
+            }
         }
     }
 }

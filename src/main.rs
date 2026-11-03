@@ -19,16 +19,16 @@ use crate::smp::CpuInfo;
 fn panic(info: &PanicInfo) -> ! {
     unsafe {
         disable_interrupts();
-        println!("RUST KERNEL PANIC");
-        println!("on CPU id: {}", CpuInfo::get_current().processor_id);
+        error!("RUST KERNEL PANIC");
+        error!("on CPU id: {}", CpuInfo::get_current().processor_id);
 
         if let Some(location) = info.location() {
-            println!("Location: {}:{}:{}", location.file(), location.line(), location.column());
+            error!("Location: {}:{}:{}", location.file(), location.line(), location.column());
         }
 
-        println!("Message: {}", info.message());
+        error!("Message: {}", info.message());
 
-        smp::send_ipi_allbutself(smp::IpiAction::HALT);
+        smp::send_ipi_allbutself(smp::IpiAction::HALT, false);
 
         hcf();
     };
@@ -70,7 +70,7 @@ pub extern "C" fn draw_framebuffer(
     pitch: usize,
 ) {
 
-    println!("hello from rust!, framebuffer at 0x{:x}", address as u64);
+    info!("hello from rust!, framebuffer at 0x{:x}", address as u64);
 
     let fb_ptr = address as *mut u32;
 

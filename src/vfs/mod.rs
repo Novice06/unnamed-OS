@@ -1,6 +1,6 @@
 use alloc::{sync::Arc, vec::Vec};
 
-use crate::{lock::{rwlock::RwLock, spinlock::SpinLockIrqSave}, println, vfs::{cpio::CpioError, tempfs::TempFs}};
+use crate::{error, info, lock::{rwlock::RwLock, spinlock::SpinLockIrqSave}, vfs::{cpio::CpioError, tempfs::TempFs}};
 
 mod tempfs;
 mod cpio;
@@ -88,8 +88,8 @@ pub fn init(cpio_archive: Option<&[u8]>) {
             Ok(_) => (),
             Err(err) => {
                 match err {
-                    CpioError::Vfs(_) => println!("there was a VFS error while unpacking the cpio archive"),
-                    _ => println!("Invalid cpio Archive"),
+                    CpioError::Vfs(_) => error!("there was a VFS error while unpacking the cpio archive"),
+                    _ => error!("Invalid cpio Archive"),
                 }
             }
         }
@@ -110,7 +110,7 @@ extern "C" fn VFS_test() {
 
     let message = core::str::from_utf8(&buff);
     match message {
-        Ok(m) => println!("data read: {m}"),
-        Err(_) => println!("failed to convert the content into string but here is the raw data {:?}", buff),
+        Ok(m) => info!("data read: {m}"),
+        Err(_) => error!("failed to convert the content into string but here is the raw data {:?}", buff),
     }
 }

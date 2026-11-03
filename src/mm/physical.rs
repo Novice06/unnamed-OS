@@ -1,5 +1,5 @@
 use core::{panic, sync::atomic::Ordering};
-use crate::{mm::PhyAddr, println, lock::spinlock::SpinLockIrqSave};
+use crate::{info, lock::spinlock::SpinLockIrqSave, mm::PhyAddr};
 use super::LimineMemMapEntry;
 
 struct Bitmap {
@@ -25,7 +25,7 @@ impl Bitmap {
         };
         
 
-        println!("bitmap base: 0x{:x} length {}", bitmap_region.base, bitmap_length);
+        info!("bitmap base: 0x{:x} length {}", bitmap_region.base, bitmap_length);
 
         // initially we mark the whole physical address space as used
         bitmap.data.fill(0xFF);

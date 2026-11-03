@@ -130,7 +130,7 @@ impl PageEntry {
         }
     }
 
-    fn _is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         for i in 0..512 {
             if self.is_present(i) {
                 return false;
@@ -139,9 +139,9 @@ impl PageEntry {
         true
     }
 
-    fn _destroy(self, parent: &mut Self, idx: usize) -> Result<(), Self> {
+    fn destroy(self, parent: &mut Self, idx: usize) -> Result<(), Self> {
 
-        if !self._is_empty() {
+        if !self.is_empty() {
             return Err(self);
         }
 
@@ -204,8 +204,10 @@ fn unmap_pages(pml4_addr: VirtAddr, VirtAddr(virt): VirtAddr, num_pages: u64) ->
             pml1.clear_entry(pml1_idx);
         }
 
-        // let _ = pml1.destroy(&mut pml2, pml2_idx);
-        // let _ = pml2.destroy(&mut pml3, pml3_idx);
+        // ohh mygod this gonna take forever !!
+        // TODO: find a way to destroy levels in batches
+        let _ = pml1.destroy(&mut pml2, pml2_idx);
+        let _ = pml2.destroy(&mut pml3, pml3_idx);
     }
 
     frames
@@ -261,7 +263,7 @@ pub fn dealloc_pages(pml4_addr: VirtAddr, virt: VirtAddr, num_pages: u64) {
     // sending an ipi to invalidate tlb including my self to prevent a case where before sending the ipi
     // we get preempted and another cpu send the ipi and then again we get preempted (for some reason idk)
     // so the cpu that sent the ipi never gets to tlb flush !
-    crate::smp::send_broadcast_ipi(smp::IpiAction::TlbFlush { start: virt, pages: num_pages as usize });
+    crate::smp::send_broadcast_ipi(smp::IpiAction::TlbFlush { start: virt, pages: num_pages as usize }, true);
 
     let mut pmm = super::physical::PHYSICAL_MEMORY_ALLOCATOR.lock();
     for frame in frames {

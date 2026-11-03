@@ -2,7 +2,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
-use crate::{lock::{crit_sec::CriticalGuard, spinlock::SpinLockIrqSave}, mm::VirtAddr, println, smp::IpiAction::{HALT, TlbFlush}, task::Thread};
+use crate::{error, lock::{crit_sec::CriticalGuard, spinlock::SpinLockIrqSave}, mm::VirtAddr, smp::IpiAction::{HALT, TlbFlush}, task::Thread};
 
 const IPI_VECTOR: u8 = 0x40;
 
@@ -119,17 +119,29 @@ extern "C" fn ipi_handler(_regs: *mut crate::Registers) {
     for ipi_message in ipi_queue.iter() {
         match ipi_message.action {
             TlbFlush { start, pages } => {
-                let VirtAddr(start) = start;
-                for page in 0..pages {
+                if pages > 64 {
                     unsafe {
-                        let addr = start + page as u64 * 0x1000;
-                        core::arch::asm!("invlpg [{}]", in(reg) addr, options(nostack, preserves_flags));
-                    };
+                        core::arch::asm!(
+                            "mov rax, cr3",
+                            "mov cr3, rax",
+                            out("rax") _,
+                            options(nostack, preserves_flags)
+                        );
+                    }
+
+                } else {
+                    let VirtAddr(start) = start;
+                    for page in 0..pages {
+                        unsafe {
+                            let addr = start + page as u64 * 0x1000;
+                            core::arch::asm!("invlpg [{}]", in(reg) addr, options(nostack, preserves_flags));
+                        };
+                    }
                 }
             },
 
             HALT => {
-                println!("SYSTEM ERROR, HALTING");
+                error!("received a halt signal HALTING");
                 unsafe {crate::hcf()};
             }
         }
@@ -143,7 +155,7 @@ extern "C" fn ipi_handler(_regs: *mut crate::Registers) {
     unsafe { crate::lapic_send_eoi() };
 }
 
-pub fn send_ipi_allbutself(action: IpiAction) {
+pub fn send_ipi_allbutself(action: IpiAction, with_completion: bool) {
 
     let completion = Completion {remaining: AtomicUsize::new(get_lapic_ids().len() - 1)};
     
@@ -162,13 +174,15 @@ pub fn send_ipi_allbutself(action: IpiAction) {
         }
     });
 
-    loop {
-        if completion.remaining.load(Ordering::Acquire) <= 0 { break; }
-        core::hint::spin_loop();
+    if with_completion {
+        loop {
+            if completion.remaining.load(Ordering::Acquire) <= 0 { break; }
+            core::hint::spin_loop();
+        }
     }
 }
 
-pub fn send_broadcast_ipi(action: IpiAction) {
+pub fn send_broadcast_ipi(action: IpiAction, with_completion: bool) {
     let completion = Completion {remaining: AtomicUsize::new(get_lapic_ids().len())};
     
     CriticalGuard::with(|| {
@@ -183,8 +197,10 @@ pub fn send_broadcast_ipi(action: IpiAction) {
         }
     });
 
-    loop {
-        if completion.remaining.load(Ordering::Acquire) <= 0 { break; }
-        core::hint::spin_loop();
+    if with_completion {
+        loop {
+            if completion.remaining.load(Ordering::Acquire) <= 0 { break; }
+            core::hint::spin_loop();
+        }
     }
 }

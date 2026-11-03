@@ -1,6 +1,6 @@
 use core::sync::atomic::{AtomicU64, Ordering::{self, Relaxed}};
 
-use crate::{mm::physical::PHYSICAL_MEMORY_ALLOCATOR, println};
+use crate::{info, mm::physical::PHYSICAL_MEMORY_ALLOCATOR};
 
 pub mod physical;
 pub mod paging;
@@ -75,10 +75,10 @@ pub extern "C" fn MEM_init(
     .max()
     .unwrap();
 
-    println!("mem size: {}MB", memory_size / (1024 * 1024));
+    info!("mem size: {}MB", memory_size / (1024 * 1024));
 
     for entry in mem_map_entries.iter() {
-        println!("base 0x{:x}, length 0x{:x}, type {}", entry.base, entry.length, entry.etype);
+        info!("base 0x{:x}, length 0x{:x}, type {}", entry.base, entry.length, entry.etype);
     }
 
     physical::init(memory_size as u32, mem_map_entries, limine_hhdm_offset);

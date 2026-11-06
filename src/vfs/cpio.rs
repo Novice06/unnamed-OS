@@ -97,7 +97,7 @@ fn insert_entry(root: &Arc<dyn Vnode>, path: &str, mode: usize, data: &[u8]) -> 
         ensure_dir(&dir, name)?;
     } else {
         // symlinks, devices... are stored as regular files for now and probably forever idk
-        let file = dir.create(name, VnodeType::VREG)?;
+        let file = dir.create(name, VnodeType::VREG, 777)?;
         file.write(0, data)?;
     }
  
@@ -109,7 +109,7 @@ fn ensure_dir(parent: &Arc<dyn Vnode>, name: &str) -> Result<Arc<dyn Vnode>, Vfs
     match parent.lookup(name) {
         Ok(node) if node.vtype() == VnodeType::VDIR => Ok(node),
         Ok(_) => Err(VfsError::NotDirectory),
-        Err(VfsError::NotFound) => parent.create(name, VnodeType::VDIR),
+        Err(VfsError::NotFound) => parent.create(name, VnodeType::VDIR, 777),
         Err(e) => Err(e),
     }
 }

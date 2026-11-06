@@ -96,7 +96,7 @@ impl Vnode for TempFsNode {
         Ok(buffer.len())
     }
  
-    fn create(&self, name: &str, vtype: VnodeType) -> Result<Arc<dyn Vnode>, VfsError> {
+    fn create(&self, name: &str, vtype: VnodeType, _mode: u32) -> Result<Arc<dyn Vnode>, VfsError> {
         let NodeKind::Dir(entries) = &self.kind else {
             return Err(VfsError::NotDirectory);
         };
@@ -114,6 +114,35 @@ impl Vnode for TempFsNode {
                 Ok(node as Arc<dyn Vnode>)
             }
         }
+    }
+
+    fn trunc(&self) -> Result<(), VfsError> {
+        let NodeKind::File(data) = &self.kind else {
+            return Err(VfsError::IsDirectory);
+        };
+
+        data.write().clear();
+
+        Ok(())
+    }
+
+    fn append(&self, buffer: &[u8]) -> Result<u64, VfsError> {
+        let NodeKind::File(data) = &self.kind else {
+            return Err(VfsError::IsDirectory);
+        };
+
+        let mut data = data.write();
+
+        let len = data.len().checked_add(buffer.len()).ok_or(VfsError::NoSpace)?;
+        if len > MAX_FILE_SIZE {
+            return Err(VfsError::NoSpace);
+        }
+
+        data.try_reserve(buffer.len()).map_err(|_| VfsError::NoSpace)?;
+
+        data.extend_from_slice(buffer);
+
+        Ok(data.len() as u64)
     }
 }
  

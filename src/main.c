@@ -71,6 +71,14 @@ void kmain_continue()
         mp_request.response->cpu_count
     );
 
+    VFS_init(initrd->address, initrd->size);
+
+    extern void VFS_test();
+    VFS_test();
+
+    // reclaime modules and executable region
+    // MEM_reclaim_region(contiguous, LIMINE_MEMMAP_EXECUTABLE_AND_MODULES);
+
     TASK_create_idle_process();
     init_smp();
     TASK_init_idle_thread();
@@ -87,14 +95,6 @@ void kmain_continue()
 
     // reclaime bootloader region
     // MEM_reclaim_region(contiguous, LIMINE_MEMMAP_BOOTLOADER_RECLAIMABLE);
-
-    VFS_init(initrd->address, initrd->size);
-
-    extern void VFS_test();
-    VFS_test();
-
-    // reclaime modules and executable region
-    // MEM_reclaim_region(contiguous, LIMINE_MEMMAP_EXECUTABLE_AND_MODULES);
 
     // Fetch the first framebuffer.
     struct limine_framebuffer *framebuffer = framebuffer_request.response->framebuffers[0];

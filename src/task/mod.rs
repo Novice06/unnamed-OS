@@ -5,7 +5,7 @@ use core::{cell::UnsafeCell, sync::atomic::{AtomicU8, AtomicUsize, Ordering::{Ac
 
 use alloc::{collections::BTreeMap, sync::{Arc, Weak}, vec::Vec};
 
-use crate::{CpuInfo, lock::{crit_sec::CriticalGuard, spinlock::SpinLockIrqSave}, mm::{MEM_get_kernel_addresspace, PhyAddr, VirtAddr, get_hhdm, physical::PHYSICAL_MEMORY_ALLOCATOR}, task::{ThreadState::SLEEPING, scheduler::{thread_start, wake_thread}}};
+use crate::{CpuInfo, lock::{crit_sec::CriticalGuard, mutex::Mutex, spinlock::SpinLockIrqSave}, mm::{MEM_get_kernel_addresspace, PhyAddr, VirtAddr, get_hhdm, physical::PHYSICAL_MEMORY_ALLOCATOR}, task::{ThreadState::SLEEPING, scheduler::{thread_start, wake_thread}}, vfs::Vnode};
 
 unsafe extern "C" {
     fn context_switch(cr3: u64, old_rsp_ptr: *mut u64, new_rsp: u64);
@@ -14,22 +14,45 @@ unsafe extern "C" {
 type PID = usize;
 type TID = usize;
 
+pub struct OpenFile {
+    pub node: Arc<dyn Vnode>,
+    pub flags: u32,
+    pub offset: Mutex<u64>,
+}
+
+impl OpenFile {
+    pub fn new(node: Arc<dyn Vnode>, flags: u32) -> Self {
+        Self { node, flags, offset: Mutex::new(0) }
+    }
+}
+
+pub struct FileDescriptor {
+    pub file: Arc<OpenFile>,
+    pub is_cloexec: bool,
+}
+
 pub struct Process {
     pid: PID,
     addr_space: PhyAddr,
-    threads: SpinLockIrqSave<Vec<Weak<Thread>>>
+    threads: SpinLockIrqSave<Vec<Weak<Thread>>>,
+    pub resources: SpinLockIrqSave<[Option<FileDescriptor>; Self::MAX_RESOURCES]>,
+    pub current_dir: Arc<dyn Vnode>,
 }
 
 impl Process {
+    pub const MAX_RESOURCES: usize = 128;
+    
     fn new_idle(id: PID) -> Self {
         Self {
             pid: id,
             addr_space: PhyAddr(MEM_get_kernel_addresspace()),
-            threads: SpinLockIrqSave::new(Vec::new())
+            threads: SpinLockIrqSave::new(Vec::new()),
+            resources: SpinLockIrqSave::new(core::array::from_fn(|_| None)),
+            current_dir: crate::vfs::ROOT_FILESYSTEM.lock().as_ref().expect("VFS not initialized").root(),
         }
     }
 
-    fn _new (id: PID) -> Result<Self, &'static str>{
+    fn _new (id: PID, current_dir: Arc<dyn Vnode>) -> Result<Self, &'static str>{
         let new_addr_space = PHYSICAL_MEMORY_ALLOCATOR
         .lock()
         .alloc_page()
@@ -47,12 +70,22 @@ impl Process {
         Ok(Self { 
             pid: id,
             addr_space: new_addr_space,
-            threads: SpinLockIrqSave::new(Vec::new())
+            threads: SpinLockIrqSave::new(Vec::new()),
+            resources: SpinLockIrqSave::new(core::array::from_fn(|_| None)),
+            current_dir
         })
     }
 
     fn add_thread(&self, thread: Weak<Thread>) {
         self.threads.lock().push(thread);
+    }
+
+    pub fn alloc_resource(&self, res: FileDescriptor) -> Option<usize> {
+        let mut resources = self.resources.lock();
+        let index = resources.iter().position(|r| r.is_none())?;
+
+        resources[index] = Some(res);
+        Some(index)
     }
 }
 
@@ -109,7 +142,7 @@ impl ThreadState {
 pub struct Thread {
     tid: TID,
     state: AtomicU8,
-    process: Arc<Process>,
+    pub process: Arc<Process>,
     rsp: UnsafeCell<u64>,
     kernel_stack: VirtAddr,
     entry_point: VirtAddr,

@@ -19,21 +19,23 @@ pub enum VfsError {
 }
  
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum VnodeType {
+pub enum VnodeType {
     VREG,
     VDIR,
 }
 
-trait Vnode {
+pub trait Vnode {
     fn vtype(&self) -> VnodeType;
 
     fn lookup(&self, name: &str) -> Result<Arc<dyn Vnode>, VfsError>;
     fn read(&self, offset: u64, buffer: &mut [u8]) -> Result<usize, VfsError>;
     fn write(&self, offset: u64, buffer: &[u8]) -> Result<usize, VfsError>;
-    fn create(&self, name: &str, vtype: VnodeType) -> Result<Arc<dyn Vnode>, VfsError>;
+    fn create(&self, name: &str, vtype: VnodeType, mode: u32) -> Result<Arc<dyn Vnode>, VfsError>;
+    fn trunc(&self) -> Result<(), VfsError>;
+    fn append(&self, buffer: &[u8]) -> Result<u64, VfsError>;
 }
 
-trait Filesystem {
+pub trait Filesystem {
     fn root(&self) -> Arc<dyn Vnode>;
 }
 
@@ -42,7 +44,7 @@ struct Mount {
     root: Arc<dyn Vnode>,
 }
 
-static ROOT_FILESYSTEM: SpinLockIrqSave<Option<Arc<dyn Filesystem>>> = SpinLockIrqSave::new(None);
+pub static ROOT_FILESYSTEM: SpinLockIrqSave<Option<Arc<dyn Filesystem>>> = SpinLockIrqSave::new(None);
 static MOUNT_POINTS: RwLock<Vec<Mount>> = RwLock::new(Vec::new());
 
 fn is_same_vnode(a: &Arc<dyn Vnode>, b: &Arc<dyn Vnode>) -> bool {
@@ -67,15 +69,52 @@ fn follow_mounts(mut node: Arc<dyn Vnode>) -> Arc<dyn Vnode> {
     }
 }
 
-fn resolve(path: &str) -> Result<Arc<dyn Vnode>, VfsError> {
-    let root = ROOT_FILESYSTEM.lock().as_ref().ok_or(VfsError::NoRoot)?.root();
+pub fn resolve(path: &str, in_this_dir: Option<Arc<dyn Vnode>>) -> Result<Arc<dyn Vnode>, VfsError> {
+
+    let initial_dir = match in_this_dir {
+        // today I learned a new pattern matching, crazy
+        Some(dir) if !path.starts_with('/') => dir,
+
+        _ => ROOT_FILESYSTEM
+            .lock()
+            .as_ref()
+            .ok_or(VfsError::NoRoot)?
+            .root(),
+    };
  
-    let mut current = follow_mounts(root);  // because maybe the root was used to another fs ?? idk
+    let mut current = follow_mounts(initial_dir);
     for component in path.split('/').filter(|c| !c.is_empty() && *c != ".") {
         current = follow_mounts(current.lookup(component)?);
     }
  
     Ok(current)
+}
+
+pub fn walk_to_parent(path: &str, in_this_dir: Option<Arc<dyn Vnode>>) -> Result<(Arc<dyn Vnode>, Option<&str>), VfsError> {
+
+    let initial_dir = match in_this_dir {
+        Some(dir) if !path.starts_with('/') => follow_mounts(dir),
+        _ => follow_mounts(ROOT_FILESYSTEM.lock().as_ref().unwrap().root()),
+    };
+
+    let mut components = path.split('/').filter(|c| !c.is_empty() && *c != ".");
+    let Some(mut last) = components.next() else {
+        return Ok((initial_dir, None));
+    };
+
+    let mut current = initial_dir;
+    for component in components {
+        current = follow_mounts(current.lookup(last)?);
+        last = component;
+    }
+
+    let child = if last.is_empty() {
+        None
+    } else {
+        Some(last)
+    };
+
+    Ok((current, child))
 }
 
 pub fn init(cpio_archive: Option<&[u8]>) {
@@ -98,7 +137,7 @@ pub fn init(cpio_archive: Option<&[u8]>) {
 
 #[unsafe(no_mangle)]
 extern "C" fn VFS_test() {
-    let vnode = resolve("/home/welcome.txt").unwrap_or_else(|_| {
+    let vnode = resolve("/home/welcome.txt", None).unwrap_or_else(|_| {
         panic!("failed to open /home/welcome.txt");
     });
 

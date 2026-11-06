@@ -9,6 +9,7 @@ pub mod lock;
 pub mod display;
 pub mod task;
 pub mod vfs;
+pub mod syscall;
 
 use core::panic::PanicInfo;
 

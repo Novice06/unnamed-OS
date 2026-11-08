@@ -1,7 +1,7 @@
 pub mod scheduler;
 mod ffi;
 
-use core::{cell::UnsafeCell, sync::atomic::{AtomicU8, AtomicUsize, Ordering::{AcqRel, Acquire, Relaxed, Release}}};
+use core::{cell::UnsafeCell, sync::atomic::{AtomicU8, AtomicU32, AtomicUsize, Ordering::{self, AcqRel, Acquire, Relaxed, Release}}};
 
 use alloc::{collections::BTreeMap, sync::{Arc, Weak}, vec::Vec};
 
@@ -13,6 +13,14 @@ unsafe extern "C" {
 
 type PID = usize;
 type TID = usize;
+
+#[derive(Debug)]
+pub enum TaskError {
+    OutOfMemory,
+    ProcessNotMySon,    // hee heee !
+    ProcessIsChildless,
+    ProcessStillRunning,
+}
 
 pub struct OpenFile {
     pub node: Arc<dyn Vnode>,
@@ -31,10 +39,36 @@ pub struct FileDescriptor {
     pub is_cloexec: bool,
 }
 
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq)]
+pub enum ProcessState {
+    ALIVE,
+    ZOMBIE,
+    DEAD,
+}
+
+impl ProcessState {
+    fn from_u8(state: u8) -> Self {
+        const ALIVE: u8 = ProcessState::ALIVE as u8;
+        const ZOMBIE: u8 = ProcessState::ZOMBIE as u8;
+        const DEAD: u8 = ProcessState::DEAD as u8;
+        match state {
+            ALIVE     => ProcessState::ALIVE,
+            ZOMBIE       => ProcessState::ZOMBIE,
+            DEAD        => ProcessState::DEAD,
+            _ => unreachable!("unknown process state")
+        }
+    }
+}
+
 pub struct Process {
-    pid: PID,
+    pub pid: PID,
+    ppid: AtomicUsize,
+    state: AtomicU8,
     addr_space: PhyAddr,
+    children: SpinLockIrqSave<Vec<Arc<Process>>>,
     threads: SpinLockIrqSave<Vec<Weak<Thread>>>,
+    status: AtomicU32,
     pub resources: SpinLockIrqSave<[Option<FileDescriptor>; Self::MAX_RESOURCES]>,
     pub current_dir: Arc<dyn Vnode>,
 }
@@ -45,18 +79,22 @@ impl Process {
     fn new_idle(id: PID) -> Self {
         Self {
             pid: id,
+            ppid: AtomicUsize::new(0),
+            state: AtomicU8::new(ProcessState::ALIVE as u8),
             addr_space: PhyAddr(MEM_get_kernel_addresspace()),
+            children: SpinLockIrqSave::new(Vec::new()),
             threads: SpinLockIrqSave::new(Vec::new()),
+            status: AtomicU32::new(0),
             resources: SpinLockIrqSave::new(core::array::from_fn(|_| None)),
             current_dir: crate::vfs::ROOT_FILESYSTEM.lock().as_ref().expect("VFS not initialized").root(),
         }
     }
 
-    fn _new (id: PID, current_dir: Arc<dyn Vnode>) -> Result<Self, &'static str>{
+    fn _new (id: PID, pid: PID, current_dir: Arc<dyn Vnode>) -> Result<Self, TaskError>{
         let new_addr_space = PHYSICAL_MEMORY_ALLOCATOR
         .lock()
         .alloc_page()
-        .ok_or("out of memory")?;
+        .ok_or(TaskError::OutOfMemory)?;
 
         let kernel_addr_space = MEM_get_kernel_addresspace();
         unsafe {
@@ -69,16 +107,41 @@ impl Process {
 
         Ok(Self { 
             pid: id,
+            ppid: AtomicUsize::new(pid),
+            state: AtomicU8::new(ProcessState::ALIVE as u8),
             addr_space: new_addr_space,
+            children: SpinLockIrqSave::new(Vec::new()),
             threads: SpinLockIrqSave::new(Vec::new()),
+            status: AtomicU32::new(0),
             resources: SpinLockIrqSave::new(core::array::from_fn(|_| None)),
             current_dir
         })
     }
 
+    pub fn get_state(&self) -> ProcessState {
+        ProcessState::from_u8(self.state.load(Acquire))
+    }
+
+    pub fn set_state(&self, state: ProcessState) {
+        self.state.store(state as u8, Release);
+    }
+
+    fn test_and_set_state(&self, current: ProcessState, new: ProcessState) -> ProcessState {
+        let state = match self.state.compare_exchange(current as u8, new as u8, AcqRel, Acquire) {
+            Ok(success) => success,
+            Err(failed) => failed 
+        };
+
+        ProcessState::from_u8(state)
+    }
+
     fn add_thread(&self, thread: Weak<Thread>) {
         self.threads.lock().push(thread);
     }
+
+    // fn add_child(&self, process: Arc<Process>) {
+    //     self.children.lock().push(process);
+    // }
 
     pub fn alloc_resource(&self, res: FileDescriptor) -> Option<usize> {
         let mut resources = self.resources.lock();
@@ -157,9 +220,9 @@ impl Thread {
         Self { tid: id, state: AtomicU8::new(ThreadState::RUNNING as u8), process: idle_proc, rsp: UnsafeCell::new(0), kernel_stack: stack, entry_point: VirtAddr(0) }
     }
 
-    pub fn new(entry_point: VirtAddr, context: &TaskContext, process: Arc<Process>, id: TID) -> Result<Self, &'static str> {
+    pub fn new(entry_point: VirtAddr, context: &TaskContext, process: Arc<Process>, id: TID) -> Result<Self, TaskError> {
 
-        let kernel_stack = crate::mm::paging::vmalloc::VMALLOC.alloc_blocks(Self::KERNEL_STACK_PAGES).ok_or("out of memory")?;
+        let kernel_stack = crate::mm::paging::vmalloc::VMALLOC.alloc_blocks(Self::KERNEL_STACK_PAGES).ok_or(TaskError::OutOfMemory)?;
 
         let stack_context_ptr = {
             let kernel_stack_top = kernel_stack.0 + crate::mm::get_pagesize();
@@ -304,17 +367,78 @@ fn reaper_thread() {
     }
 }
 
-pub fn exit_thread() -> ! {
+pub fn wait_anychildproc() -> Result<(PID, u32), TaskError> {
+    let current = CriticalGuard::with(|| CpuInfo::get_current().current_thread.as_ref().unwrap().process.clone());
+    let mut children = current.children.lock();
+
+    if children.is_empty() {
+        return Err(TaskError::ProcessIsChildless);
+    }
+
+    let Some(zombie_idx) = children
+    .iter()
+    .position(|proc| proc.test_and_set_state(ProcessState::ZOMBIE, ProcessState::DEAD) == ProcessState::ZOMBIE) else {
+        return Err(TaskError::ProcessStillRunning);
+    };
+    
+
+    let zombie = children.remove(zombie_idx);
+    drop(children);
+
+    TASK_MANAGER.remove_process(zombie.pid).expect("corruption");
+    Ok((zombie.pid, zombie.status.load(Acquire)))
+}
+
+pub fn wait_process(id: PID) -> Result<(PID, u32), TaskError> {
+    let current = CriticalGuard::with(|| CpuInfo::get_current().current_thread.as_ref().unwrap().process.clone());
+    let mut children = current.children.lock();
+
+    let child_idx = children.iter().position(|proc| proc.pid == id).ok_or(TaskError::ProcessNotMySon)?.clone();
+
+    if children[child_idx].test_and_set_state(ProcessState::ZOMBIE, ProcessState::DEAD) != ProcessState::ZOMBIE {
+        return Err(TaskError::ProcessStillRunning);
+    }
+
+    let child = children.remove(child_idx);
+    drop(children); // to re-enable interrupt
+
+    TASK_MANAGER.remove_process(child.pid).expect("corruption");
+    Ok((child.pid, child.status.load(Acquire)))
+}
+
+pub fn exit_thread(code: i32) -> ! {
     {
         let current_thread = CriticalGuard::with(|| CpuInfo::get_current().current_thread.as_ref().cloned().unwrap());
 
-        let mut this_process_threads = current_thread.process.threads.lock();
-        this_process_threads.retain(|weak_thread| {
-            weak_thread.upgrade().map_or(false, |this_thread| !Arc::ptr_eq(&this_thread, &current_thread))
-        });
+        let zero_thread_left = {
+            let mut this_process_threads = current_thread.process.threads.lock();
+            this_process_threads.retain(|weak_thread| {
+                weak_thread.upgrade().map_or(false, |this_thread| !Arc::ptr_eq(&this_thread, &current_thread))
+            });
 
-        if this_process_threads.is_empty() {
-            TASK_MANAGER.remove_process(current_thread.process.pid);
+            this_process_threads.is_empty()
+        };
+
+        if zero_thread_left {
+            if current_thread.process.pid <= 1 {
+                panic!("attempted to kill init");
+            }
+
+            let this_process = current_thread.process.clone();
+            let init = TASK_MANAGER.get_process(1).expect("no init found");
+
+            let children = core::mem::take(&mut *this_process.children.lock());
+            
+            // init adoption
+            for child in &children {
+                child.ppid.store(1, Relaxed);
+            }
+
+            init.children.lock().extend(children);
+
+            let status = this_process.status.load(Ordering::Relaxed);
+            this_process.status.store(((code as u32 & 0xff) << 8) | status, Ordering::Relaxed);
+            this_process.set_state(ProcessState::ZOMBIE);
         }
 
         TASK_MANAGER.remove_thread(current_thread.tid);
@@ -343,7 +467,7 @@ pub fn spawn_thread(entry_point: VirtAddr) {
             entry_point,
             &context,
             current_process.clone(),tid
-        ).unwrap_or_else(|e| panic!("{e}"));
+        ).unwrap();
 
         TASK_MANAGER.add_thread(thread, tid)
     };
@@ -384,7 +508,7 @@ pub extern "C" fn TASK_create_idle_process() {    // this function will be calle
         VirtAddr(reaper_thread as *const u8 as u64), 
         &context, idle_proc, 
         tid
-    ).unwrap_or_else(|e| panic!("{e}"));
+    ).unwrap();
     thread_reaper.set_state(ThreadState::WAITING);
     
     TASK_MANAGER.add_thread(thread_reaper, tid);

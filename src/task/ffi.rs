@@ -6,8 +6,8 @@ unsafe extern "C" fn TASK_spawn_thread(entry_point: *mut u8) {
 }
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn TASK_exit_thread() {
-    exit_thread();
+unsafe extern "C" fn TASK_exit_thread(code: i32) {
+    exit_thread(code);
 }
 
 #[unsafe(no_mangle)]

@@ -113,7 +113,7 @@ pub fn thread_start() -> ! {
 
     entry_point();
 
-    super::exit_thread();
+    super::exit_thread(-1);
 }
 
 extern "C" fn preempt(_regs: *mut crate::Registers) {

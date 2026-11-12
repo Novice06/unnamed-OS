@@ -5,7 +5,7 @@ use core::{cell::UnsafeCell, sync::atomic::{AtomicU8, AtomicU32, AtomicUsize, Or
 
 use alloc::{collections::BTreeMap, sync::{Arc, Weak}, vec::Vec};
 
-use crate::{CpuInfo, lock::{crit_sec::CriticalGuard, mutex::Mutex, spinlock::SpinLockIrqSave}, mm::{MEM_get_kernel_addresspace, PhyAddr, VirtAddr, get_hhdm, physical::PHYSICAL_MEMORY_ALLOCATOR}, task::{ThreadState::SLEEPING, scheduler::{thread_start, wake_thread}}, vfs::Vnode};
+use crate::{CpuInfo, lock::{crit_sec::CriticalGuard, mutex::Mutex, spinlock::SpinLockIrqSave}, mm::{MEM_get_kernel_addresspace, PhyAddr, VirtAddr, get_hhdm, physical::PHYSICAL_MEMORY_ALLOCATOR, virtual_area::AddressSpace}, task::{ThreadState::SLEEPING, scheduler::{thread_start, wake_thread}}, vfs::Vnode};
 
 unsafe extern "C" {
     fn context_switch(cr3: u64, old_rsp_ptr: *mut u64, new_rsp: u64);
@@ -65,7 +65,8 @@ pub struct Process {
     pub pid: PID,
     ppid: AtomicUsize,
     state: AtomicU8,
-    addr_space: PhyAddr,
+    addr_space: Mutex<AddressSpace>,
+    cr3: PhyAddr,
     children: SpinLockIrqSave<Vec<Arc<Process>>>,
     threads: SpinLockIrqSave<Vec<Weak<Thread>>>,
     status: AtomicU32,
@@ -77,11 +78,15 @@ impl Process {
     pub const MAX_RESOURCES: usize = 128;
     
     fn new_idle(id: PID) -> Self {
+        let kernel_cr3 = MEM_get_kernel_addresspace();
+        let pml4 = MEM_get_kernel_addresspace() + get_hhdm();
+
         Self {
             pid: id,
             ppid: AtomicUsize::new(0),
             state: AtomicU8::new(ProcessState::ALIVE as u8),
-            addr_space: PhyAddr(MEM_get_kernel_addresspace()),
+            addr_space: Mutex::new(AddressSpace::new(VirtAddr(pml4))),
+            cr3: PhyAddr(kernel_cr3),
             children: SpinLockIrqSave::new(Vec::new()),
             threads: SpinLockIrqSave::new(Vec::new()),
             status: AtomicU32::new(0),
@@ -96,20 +101,22 @@ impl Process {
         .alloc_page()
         .ok_or(TaskError::OutOfMemory)?;
 
-        let kernel_addr_space = MEM_get_kernel_addresspace();
+        let kernel_cr3 = MEM_get_kernel_addresspace();
         unsafe {
             let PhyAddr(addr_space) = new_addr_space;
-            let addr_space = (addr_space + get_hhdm()) as *mut u8;
-            let kernel_addr_space = (kernel_addr_space + get_hhdm()) as *mut u8;
+            let addr_space = addr_space + get_hhdm();
+            let kernel_addr_space = kernel_cr3 + get_hhdm();
 
-            core::ptr::copy_nonoverlapping(kernel_addr_space, addr_space, crate::mm::get_pagesize() as usize);
+            // higher half
+            core::ptr::copy_nonoverlapping((kernel_addr_space + 256 * 8) as *mut u8, (addr_space + 256 * 8) as *mut u8, 256 * 8);
         }
 
         Ok(Self { 
             pid: id,
             ppid: AtomicUsize::new(pid),
             state: AtomicU8::new(ProcessState::ALIVE as u8),
-            addr_space: new_addr_space,
+            addr_space: Mutex::new(AddressSpace::new(VirtAddr(kernel_cr3 + get_hhdm()))),
+            cr3: PhyAddr(kernel_cr3),
             children: SpinLockIrqSave::new(Vec::new()),
             threads: SpinLockIrqSave::new(Vec::new()),
             status: AtomicU32::new(0),
@@ -154,8 +161,8 @@ impl Process {
 
 impl Drop for Process {
     fn drop(&mut self) {
-        // todo destroy address space correctly here by deallocating each level
-        PHYSICAL_MEMORY_ALLOCATOR.lock().free_page(self.addr_space);
+        self.addr_space.try_lock().expect("impossible !!").clean();
+        PHYSICAL_MEMORY_ALLOCATOR.lock().free_page(self.cr3);
     }
 }
 

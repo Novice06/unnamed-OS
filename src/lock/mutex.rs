@@ -22,6 +22,14 @@ impl<T> Mutex<T> {
         }
     }
 
+    pub fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
+        if !self.lock.swap(true, Ordering::Acquire) {
+            return Some(MutexGuard { lock: &self });
+        }
+
+        None
+    }
+
     pub fn lock(&self) -> MutexGuard<'_, T> {
         if !self.lock.swap(true, Ordering::Acquire) {
             return MutexGuard { lock: &self };

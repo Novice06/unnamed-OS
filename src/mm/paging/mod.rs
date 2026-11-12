@@ -213,6 +213,16 @@ fn unmap_pages(pml4_addr: VirtAddr, VirtAddr(virt): VirtAddr, num_pages: u64) ->
     frames
 }
 
+pub fn get_physical(pml4_addr: VirtAddr, addr: VirtAddr) -> Option<PhyAddr> {
+    let mut pml4 = PageEntry::from(pml4_addr);
+
+    let mut pml3 = pml4.from_previous_level(((addr.0 >> 39) & 0x1FF) as usize, false)?;
+    let mut pml2 = pml3.from_previous_level(((addr.0 >> 30) & 0x1FF) as usize, false)?;
+    let pml1 = pml2.from_previous_level(((addr.0 >> 21) & 0x1FF) as usize, false)?;
+
+    pml1.get_physical(((addr.0 >> 12) & 0x1FF) as usize)
+}
+
 pub fn map_mmio(PhyAddr(phys): PhyAddr, num_pages: u64) -> VirtAddr{
     let _guard = PAGING_LOCK.lock();
 
@@ -269,6 +279,51 @@ pub fn dealloc_pages(pml4_addr: VirtAddr, virt: VirtAddr, num_pages: u64) {
     for frame in frames {
         pmm.free_page(frame);
     }
+}
+
+/// The caller is responsible for synchronization, so this function does not acquire the internal paging lock and operates only on low addresses.
+pub fn alloc_pages_low(pml4_addr: VirtAddr, VirtAddr(virt): VirtAddr, num_pages: u64, flags: u8) -> Result<(), ()>
+{
+    if (virt >> 47) == 0x1FFFF {
+        return Err(());
+    }
+
+    for i in 0..num_pages {
+        let current_virt = VirtAddr(virt + 0x1000 * i);
+
+        if PageEntry::is_mapped(pml4_addr, current_virt) {continue;}
+
+        let frame = super::physical::PHYSICAL_MEMORY_ALLOCATOR.lock().alloc_page().ok_or(())?;
+        map_pages(
+            pml4_addr,
+            current_virt,
+            frame,
+            1,
+            flags
+        );
+    }
+
+    Ok(())
+}
+
+/// same as `alloc_pages_low`
+pub fn dealloc_pages_low(pml4_addr: VirtAddr, virt: VirtAddr, num_pages: u64) -> Result<(), ()> {
+
+    if (virt.0 >> 47) == 0x1FFFF {
+        return Err(());
+    }
+    
+    let frames = unmap_pages(pml4_addr, virt, num_pages);
+
+    // still dont know about sending an ipi...
+    crate::smp::send_broadcast_ipi(smp::IpiAction::TlbFlush { start: virt, pages: num_pages as usize }, true);
+
+    let mut pmm = super::physical::PHYSICAL_MEMORY_ALLOCATOR.lock();
+    for frame in frames {
+        pmm.free_page(frame);
+    }
+
+    Ok(())
 }
 
 pub fn alloc_pages_in_pdbr(addr: VirtAddr, num_pages: u64, flags: u8) {

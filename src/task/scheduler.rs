@@ -55,7 +55,7 @@ pub fn yield_task() {
 
     let previous_thread = this_cpu.current_thread.take().unwrap();
 
-    let PhyAddr(cr3) = next_thread.process.addr_space;
+    let PhyAddr(cr3) = next_thread.process.cr3;
     let new_rsp = unsafe {
         *next_thread.rsp.get()
     };

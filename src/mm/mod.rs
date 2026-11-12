@@ -5,6 +5,7 @@ use crate::{info, mm::physical::PHYSICAL_MEMORY_ALLOCATOR};
 pub mod physical;
 pub mod paging;
 pub mod slab;
+pub mod virtual_area;
 
 const LIMINE_MEMMAP_USABLE: u64 = 0;
 const _LIMINE_MEMMAP_RESERVED: u64 = 1;

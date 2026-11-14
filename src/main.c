@@ -36,7 +36,7 @@ static inline uintptr_t get_cr2(void) {
     return value;
 }
 
-void early_page_fault_handler(Registers* regs)
+void early_page_fault_handler(TrapFrame* regs)
 {
     SERIAL_printf("PAGE FAULT !!\n");
     SERIAL_printf("  rax=0x%lx  rbx=0x%lx  rcx=0x%lx  rdx=0x%lx  rsi=0x%lx  rdi=0x%lx\n",

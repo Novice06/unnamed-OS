@@ -137,7 +137,7 @@ pub extern "C" fn SMP_init_IPI() {
     unsafe { crate::ISR_registerNewHandler(IPI_VECTOR as i32, ipi_handler) }
 }
 
-extern "C" fn ipi_handler(_regs: *mut crate::Registers) {
+extern "C" fn ipi_handler(_regs: *mut crate::TrapFrame) {
     let mut ipi_queue = CpuInfo::get_current().ipi_queue.lock();
     for ipi_message in ipi_queue.iter() {
         match ipi_message.action {

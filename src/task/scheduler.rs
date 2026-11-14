@@ -116,7 +116,7 @@ pub fn thread_start() -> ! {
     super::exit_thread(-1);
 }
 
-extern "C" fn preempt(_regs: *mut crate::Registers) {
+extern "C" fn preempt(_regs: *mut crate::TrapFrame) {
     unsafe { crate::lapic_send_eoi() };
     yield_task();
 }

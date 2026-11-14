@@ -22,14 +22,21 @@ ISR%1:
 
 ; cpu pushes to the stack: ss, rsp, rflags, cs, rip
 isr_common:
-    ; pusha               ; pushes in order: rax, rcx, rdx, rbx, rsp, rbp, rsi, rdi
-    push rax
-    push rcx
-    push rdx
-    push rbx
+    push r15
+    push r14
+    push r13
+    push r12
+    push r11
+    push r10
+    push r9
+    push r8
     push rbp
-    push rsi
     push rdi
+    push rsi
+    push rdx
+    push rcx
+    push rbx
+    push rax
 
     xor rax, rax        ; push ds
     mov ax, ds
@@ -46,14 +53,21 @@ isr_common:
     mov ds, ax
     mov es, ax
 
-    ; popa                ; pop what we pushed with pusha
-    pop rdi
-    pop rsi
-    pop rbp
-    pop rbx
-    pop rdx
-    pop rcx
     pop rax
+    pop rbx
+    pop rcx
+    pop rdx
+    pop rsi
+    pop rdi
+    pop rbp
+    pop r8
+    pop r9
+    pop r10
+    pop r11
+    pop r12
+    pop r13
+    pop r14
+    pop r15
 
     add rsp, 16         ; remove error code and interrupt number
     iretq                ; will pop: cs, rip, rflags, ss, rsp

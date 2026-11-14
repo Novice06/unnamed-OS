@@ -48,7 +48,7 @@ void ISR_init()
     ISR_initializeGates();
 }
 
-void ISR_handler(Registers* regs)
+void ISR_handler(TrapFrame* regs)
 {
     if(g_ISR_handlers[regs->interrupt] != NULL)
         g_ISR_handlers[regs->interrupt](regs);

@@ -27,7 +27,7 @@ struct LapicIds
 };
 
 extern void SMP_init_IPI(); // smp/mod.rs
-extern CpuInfo* CPU_init(uint32_t lapic_id, uint32_t processor_id, uint64_t stack_top);
+extern CpuInfo* CPU_init(uint64_t lapic_id, uint64_t processor_id, uint64_t stack_top, struct Tss* tss_addr);
 
 extern bool kernel_ready;
 extern const uint32_t KERNEL_STACK_PAGES;
@@ -60,7 +60,7 @@ void continue_boot_ap_core()
 
 void boot_ap_core(struct limine_mp_info *core)
 {
-    GDT_init();
+    GDT_init_early();
     IDT_init();
 
     uint64_t pdbr = MEM_get_kernel_addresspace();
@@ -106,7 +106,9 @@ CpuInfo* get_cpu(uint8_t lapic_id)
 
 void init_cpu_struct(uint32_t lapic_id, uint32_t processor_id, uint64_t stack_top)
 {
-    CpuInfo *this_cpu = CPU_init(lapic_id, processor_id, stack_top);
+    struct Tss* tss = GDT_init_core();
+
+    CpuInfo *this_cpu = CPU_init(lapic_id, processor_id, stack_top, tss);
 
     CPUS[this_cpu->lapic_id] = this_cpu;
 

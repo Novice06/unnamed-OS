@@ -40,13 +40,34 @@ impl Completion {
 }
 struct IpiMessage {action: IpiAction, done: Option<*const Completion>}
 
+#[repr(C, packed)]
+pub struct Tss {
+    pub reserved0: u32,
+    pub rsp0: u64,
+    pub rsp1: u64,
+    pub rsp2: u64,
+    pub reserved1: u64,
+    pub ist1: u64,
+    pub ist2: u64,
+    pub ist3: u64,
+    pub ist4: u64,
+    pub ist5: u64,
+    pub ist6: u64,
+    pub ist7: u64,
+    pub reserved2: u64,
+    pub reserved3: u16,
+    pub iopb: u16,
+}
+
 #[repr(C)] // because we want some member of our struct to be accessible from C
 pub struct CpuInfo {
     pub self_ptr: *mut CpuInfo,
-    pub lapic_id: u32,
-    pub processor_id: u32,
-    pub lapic_ticks_in_1ms: u32,
-    pub own_stack: VirtAddr,
+    pub kernel_stack_top: VirtAddr,
+    pub user_stack_temp: VirtAddr,  // to save user's rsp when doing a syscall
+    pub lapic_id: u64,
+    pub processor_id: u64,
+    pub lapic_ticks_in_1ms: u64,
+    pub tss: *mut Tss,
     
     // rust specific members
     pub previous_thread: Option<Arc<Thread>>,
@@ -89,13 +110,15 @@ impl CpuInfo {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn CPU_init(lapic_id: u32, processor_id: u32, stack_top: u64) -> *mut CpuInfo {
+pub extern "C" fn CPU_init(lapic_id: u64, processor_id: u64, stack_top: u64, tss_addr: *mut Tss) -> *mut CpuInfo {
     let cpu_box = Box::new(CpuInfo {
         self_ptr: core::ptr::null_mut(),
         lapic_id,
         processor_id,
         lapic_ticks_in_1ms: 0,
-        own_stack: VirtAddr(stack_top),
+        kernel_stack_top: VirtAddr(stack_top),
+        user_stack_temp: VirtAddr(0),
+        tss: tss_addr,
         previous_thread: None,
         current_thread: None,
         idle_thread: None,

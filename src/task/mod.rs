@@ -9,6 +9,8 @@ use crate::{CpuInfo, lock::{crit_sec::CriticalGuard, mutex::Mutex, spinlock::Spi
 
 unsafe extern "C" {
     fn context_switch(cr3: u64, old_rsp_ptr: *mut u64, new_rsp: u64);
+
+    static KERNEL_STACK_PAGES: u32;
 }
 
 type PID = usize;
@@ -493,7 +495,10 @@ pub extern "C" fn TASK_init_idle_thread() {
     let idle_process = TASK_MANAGER.get_process(0).expect("idle process not found!");
     let idle_thread_arc = {
         let tid = alloc_tid();
-        let idle_thread = Thread::create_idle(cpu.own_stack, idle_process.clone(), tid);
+        let stack_bottom = unsafe {
+            cpu.kernel_stack_top.0 - (KERNEL_STACK_PAGES as u64 * 0x1000)
+        };
+        let idle_thread = Thread::create_idle(VirtAddr(stack_bottom), idle_process.clone(), tid);
 
         TASK_MANAGER.add_thread(idle_thread, tid)    // do we really need to put the idle thread in the task manager? idk!
     };

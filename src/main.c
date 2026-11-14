@@ -150,7 +150,8 @@ void kmain()
         }
     }
 
-    GDT_init();
+    GDT_init_early();
+    
     IDT_init();
     ISR_init();
 

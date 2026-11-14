@@ -11,12 +11,27 @@ gdt_flush:
     retfq
 
 .reload_CS:
-    mov   ax, 0x10 ; 0x10 is a stand-in for your data segment
+    mov   ax, 0x10
     mov   ds, ax
     mov   es, ax
     mov   fs, ax
     mov   gs, ax
     mov   ss, ax
+
+    mov rsp, rbp
+    pop rbp
+    ret
+
+global TSS_flush
+
+TSS_flush:
+    push rbp
+    mov rbp, rsp
+
+    movzx ax, dil
+    shl ax, 3
+
+    ltr ax
 
     mov rsp, rbp
     pop rbp

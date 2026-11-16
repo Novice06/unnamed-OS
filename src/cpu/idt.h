@@ -7,7 +7,7 @@ typedef enum {
     TRAP_GATE       = 0x0F,
 
     DPL_KERNEL      = 0x00,
-    DPL_USER        = 0x30,
+    DPL_USER        = 0x60,
 
     GATE_PRESENT    = 0x80,
 }GATE_ATTRIBUTE;

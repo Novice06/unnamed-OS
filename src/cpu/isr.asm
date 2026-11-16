@@ -1,5 +1,12 @@
 extern ISR_handler
 
+%macro swapgs_if_necessary 0
+    test qword [rsp + 24], 3 ; test if we were in ring 3
+    jz %%skip
+    swapgs
+%%skip:
+%endmacro
+
 %macro ISR_NOERRORCODE 1
 global ISR%1:
 ISR%1:
@@ -22,6 +29,8 @@ ISR%1:
 
 ; cpu pushes to the stack: ss, rsp, rflags, cs, rip
 isr_common:
+    swapgs_if_necessary
+
     push r15
     push r14
     push r13
@@ -68,6 +77,8 @@ isr_common:
     pop r13
     pop r14
     pop r15
+
+    swapgs_if_necessary
 
     add rsp, 16         ; remove error code and interrupt number
     iretq                ; will pop: cs, rip, rflags, ss, rsp

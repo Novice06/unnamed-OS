@@ -1,14 +1,14 @@
 pub mod scheduler;
-mod ffi;
 
 use core::{cell::UnsafeCell, sync::atomic::{AtomicU8, AtomicU32, AtomicUsize, Ordering::{self, AcqRel, Acquire, Relaxed, Release}}};
 
 use alloc::{collections::BTreeMap, sync::{Arc, Weak}, vec::Vec};
 
-use crate::{CpuInfo, lock::{crit_sec::CriticalGuard, mutex::Mutex, spinlock::SpinLockIrqSave}, mm::{MEM_get_kernel_addresspace, PhyAddr, VirtAddr, get_hhdm, physical::PHYSICAL_MEMORY_ALLOCATOR, virtual_area::AddressSpace}, task::{ThreadState::SLEEPING, scheduler::{thread_start, wake_thread}}, vfs::Vnode};
+use crate::{CpuInfo, lock::{crit_sec::CriticalGuard, mutex::Mutex, spinlock::SpinLockIrqSave}, mm::{MEM_get_kernel_addresspace, PhyAddr, VirtAddr, get_hhdm, paging, physical::PHYSICAL_MEMORY_ALLOCATOR, virtual_area::{self, AddressSpace, VirtualArea}}, task::{ThreadState::SLEEPING, scheduler::{thread_start, wake_thread}}, vfs::Vnode};
 
 unsafe extern "C" {
     fn context_switch(cr3: u64, old_rsp_ptr: *mut u64, new_rsp: u64);
+    fn switch_to_usermode(frame: *const crate::TrapFrame);
 
     static KERNEL_STACK_PAGES: u32;
 }
@@ -97,7 +97,7 @@ impl Process {
         }
     }
 
-    fn _new (id: PID, pid: PID, current_dir: Arc<dyn Vnode>) -> Result<Self, TaskError>{
+    fn new (id: PID, pid: PID, current_dir: Arc<dyn Vnode>) -> Result<Self, TaskError>{
         let new_addr_space = PHYSICAL_MEMORY_ALLOCATOR
         .lock()
         .alloc_page()
@@ -216,6 +216,7 @@ pub struct Thread {
     state: AtomicU8,
     pub process: Arc<Process>,
     rsp: UnsafeCell<u64>,
+    user_frame: Option<crate::TrapFrame>,
     kernel_stack: VirtAddr,
     entry_point: VirtAddr,
 }
@@ -226,10 +227,10 @@ impl Thread {
 
     pub fn create_idle(stack: VirtAddr, idle_proc: Arc<Process>, id: TID) -> Self {
 
-        Self { tid: id, state: AtomicU8::new(ThreadState::RUNNING as u8), process: idle_proc, rsp: UnsafeCell::new(0), kernel_stack: stack, entry_point: VirtAddr(0) }
+        Self { tid: id, state: AtomicU8::new(ThreadState::RUNNING as u8), process: idle_proc, rsp: UnsafeCell::new(0), user_frame: None, kernel_stack: stack, entry_point: VirtAddr(0) }
     }
 
-    pub fn new(entry_point: VirtAddr, context: &TaskContext, process: Arc<Process>, id: TID) -> Result<Self, TaskError> {
+    pub fn new(entry_point: VirtAddr, user_frame: Option<crate::TrapFrame>, process: Arc<Process>, id: TID) -> Result<Self, TaskError> {
 
         let kernel_stack = crate::mm::paging::vmalloc::VMALLOC.alloc_blocks(Self::KERNEL_STACK_PAGES).ok_or(TaskError::OutOfMemory)?;
 
@@ -239,14 +240,15 @@ impl Thread {
         };
         let stack_context = unsafe { &mut *stack_context_ptr };
         
-        *stack_context = *context;
+        *stack_context = TaskContext::default();
         stack_context.rip = thread_start as *const u8 as u64;
 
         Ok(Self { 
             tid: id,
             state: AtomicU8::new(ThreadState::NEW as u8), 
             process, 
-            rsp: UnsafeCell::new(stack_context_ptr as u64), 
+            rsp: UnsafeCell::new(stack_context_ptr as u64),
+            user_frame,
             kernel_stack, 
             entry_point
         })
@@ -459,9 +461,7 @@ pub fn exit_thread(code: i32) -> ! {
     unreachable!("shouldnt get here !!");
 }
 
-pub fn spawn_thread(entry_point: VirtAddr) {
-
-    let context = TaskContext {..Default::default()};
+pub fn spawn_kernel_thread(entry_point: VirtAddr) {
 
     let current_process = CriticalGuard::with(|| {
         CpuInfo::get_current()
@@ -474,13 +474,33 @@ pub fn spawn_thread(entry_point: VirtAddr) {
         let tid = alloc_tid();
         let thread = Thread::new(
             entry_point,
-            &context,
+            None,
             current_process.clone(),tid
         ).unwrap();
 
         TASK_MANAGER.add_thread(thread, tid)
     };
     current_process.add_thread(Arc::downgrade(&thread_arc));
+
+    match scheduler::schedule_thread(thread_arc) {
+        Ok(_) => (),
+        Err(_) => panic!("failed to schedule a new thread"),
+    };
+}
+
+pub fn spawn_user_thread(frame: crate::TrapFrame, process: Arc<Process>) {
+    let thread_arc = {
+        let tid = alloc_tid();
+        let thread = Thread::new(
+            VirtAddr(0),
+            Some(frame),
+            process.clone(),tid
+        ).unwrap();
+
+        TASK_MANAGER.add_thread(thread, tid)
+    };
+
+    process.add_thread(Arc::downgrade(&thread_arc));
 
     match scheduler::schedule_thread(thread_arc) {
         Ok(_) => (),
@@ -515,14 +535,60 @@ pub extern "C" fn TASK_create_idle_process() {    // this function will be calle
     let idle_proc = TASK_MANAGER.add_process(Process::new_idle(pid), pid);
 
     let tid = alloc_tid();
-    let context = TaskContext {..Default::default()};
     let thread_reaper = Thread::new(
         VirtAddr(reaper_thread as *const u8 as u64), 
-        &context, idle_proc, 
+        None, idle_proc, 
         tid
     ).unwrap();
     thread_reaper.set_state(ThreadState::WAITING);
     
     TASK_MANAGER.add_thread(thread_reaper, tid);
     TASK_MANAGER.reaper_thread_id.store(tid, Relaxed);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn TASK_create_init_process() {
+
+    const INIT: [u8; 18] = [
+        0xB8, 0x01, 0x00, 0x00, 0x00, // mov eax, 1
+        0x0F, 0x05,                   // syscall
+
+        0xB8, 0x02, 0x00, 0x00, 0x00, // mov eax, 2
+        0x0F, 0x05,                   // syscall
+
+        0xCD, 0x80,                   // int 0x80
+
+        0xEB, 0xFE                    // jmp $
+    ];
+
+    let pid = alloc_pid();
+
+    if pid != 1 {
+        panic!("another process already booked init's pid");
+    }
+
+    let root_dir = crate::vfs::ROOT_FILESYSTEM.lock().as_ref().expect("VFS not initialized").root();
+    let init_proc = Process::new(pid, 0, root_dir).expect("failed to create init");
+    let init_proc = TASK_MANAGER.add_process(init_proc, pid);
+
+    let code = VirtualArea::new(
+        VirtAddr(0x400000), 
+        1, 
+        virtual_area::VM_EXEC | virtual_area::VM_WRITE
+    ).unwrap();
+    // let stack = VirtualArea::new(start, pages, flags);
+
+    init_proc.addr_space.lock().insert(code);
+
+    let proc_pml4 = init_proc.addr_space.lock().pml4;
+    let addr = paging::get_physical(proc_pml4, VirtAddr(0x400000)).unwrap();
+    unsafe { 
+        let dst = (addr.0 + crate::mm::get_hhdm()) as *mut u8;
+        let src = INIT.as_ptr();
+
+        core::ptr::copy_nonoverlapping(src, dst, INIT.len());
+    }
+
+    let frame = crate::TrapFrame::user_frame(VirtAddr(0x401000), VirtAddr(0x400000));
+    spawn_user_thread(frame, init_proc);
 }

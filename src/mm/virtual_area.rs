@@ -8,9 +8,8 @@ const USER_SPACE_END: u64 = 0x0000800000000000;
 
 pub type VmFlags = u8;
 
-pub const VM_READ: VmFlags  = 1 << 0;
-pub const VM_WRITE: VmFlags = 1 << 1;
-pub const VM_EXEC: VmFlags  = 1 << 2;
+pub const VM_WRITE: VmFlags = 1 << 0;
+pub const VM_EXEC: VmFlags  = 1 << 1;
 
 
 #[derive(Clone, Copy, Debug)]
@@ -53,11 +52,11 @@ impl VirtualArea {
     }
 
     pub fn to_paging_flags(flags: VmFlags) -> u8 {
-        let mut pflags = if (flags & VM_WRITE) == 0 { paging::PAGE_DEFAULT  } else {
+        let mut pflags = if (flags & VM_WRITE) != 0 { paging::PAGE_DEFAULT  } else {
             paging::PAGE_PRESENT
         };
 
-        if (flags & VM_EXEC) != 0 {
+        if (flags & VM_EXEC) == 0 {
             pflags = pflags | paging::PAGE_NO_EXECUTE;
         }
 

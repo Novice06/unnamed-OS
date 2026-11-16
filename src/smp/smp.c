@@ -11,6 +11,8 @@
 
 #include <task/rust_interface.h>
 
+#include <syscall/syscall.h>
+
 #include <utils/limine_requests.h>
 #include <utils/utils.h>
 
@@ -40,6 +42,8 @@ volatile uint8_t CORE_BOOTED = 1;    // the boostrap processesor
 
 void continue_boot_ap_core()
 {
+    SYSCALL_init_core();
+    
     TASK_init_idle_thread();
 
     LAPIC_calibrate_timer();

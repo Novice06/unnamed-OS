@@ -21,6 +21,8 @@
 
 #include <vfs/rust_interface.h>
 
+#include <syscall/syscall.h>
+
 #include <smp/smp.h>
 
 const uint32_t KERNEL_STACK_PAGES   =   8;  // 32kb
@@ -45,7 +47,7 @@ void early_page_fault_handler(TrapFrame* regs)
     SERIAL_printf("  rsp=0x%lx  rbp=0x%lx  rip=0x%lx  rflags=0x%lx  cs=0x%lx  ds=0x%lx  ss=0x%lx\n",
             regs->rsp, regs->rbp, regs->rip, regs->rflags, regs->cs, regs->ds, regs->ss);
 
-    SERIAL_printf("  interrupt=%lx  errorcode=%lx\n", regs->interrupt, regs->error);
+    SERIAL_printf("  interrupt=0x%lx  errorcode=0x%lx\n", regs->interrupt, regs->error);
     SERIAL_printf("cr2: 0x%lx\n", get_cr2());
 
     SERIAL_puts("KERNEL PANIC!\n");
@@ -79,6 +81,8 @@ void kmain_continue()
     // reclaime modules and executable region
     // MEM_reclaim_region(contiguous, LIMINE_MEMMAP_EXECUTABLE_AND_MODULES);
 
+    SYSCALL_init_bootstrap();
+
     TASK_create_idle_process();
     init_smp();
     TASK_init_idle_thread();
@@ -92,6 +96,8 @@ void kmain_continue()
 
     kernel_ready = true;
     LAPIC_unlock_timer();
+
+    TASK_create_init_process();
 
     // reclaime bootloader region
     // MEM_reclaim_region(contiguous, LIMINE_MEMMAP_BOOTLOADER_RECLAIMABLE);

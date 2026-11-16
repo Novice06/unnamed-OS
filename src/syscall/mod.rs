@@ -1,7 +1,7 @@
 pub mod fs;
 pub mod proc;
 
-use crate::vfs::VfsError;
+use crate::{TrapFrame, disable_interrupts, enable_interrupts, vfs::VfsError};
 
 #[repr(i32)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -99,4 +99,18 @@ impl From<VfsError> for Errno {
             VfsError::Busy => Errno::EBUSY,
         }
     }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn SYSCALL_dispatcher(frame: *mut TrapFrame) {
+    unsafe {enable_interrupts();}
+
+    crate::info!("yeahh triggered a syscall !!");
+
+    let frame = unsafe {
+        &*frame
+    };
+    crate::info!("frame: {:x?}", frame);
+
+    unsafe {disable_interrupts();}
 }

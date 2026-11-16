@@ -73,7 +73,7 @@ pub fn yield_task() {
     finish_context_switch();
 }
 
-fn finish_context_switch() {
+fn finish_context_switch() -> Arc<Thread> {
     let this_cpu = CpuInfo::get_current();
     let previous_thread = this_cpu.previous_thread.take().expect("impossible !! we're finishing a context switch without a previous task?");
 
@@ -99,19 +99,31 @@ fn finish_context_switch() {
             _ => (),
         }
     }
+
+    let current_thread = this_cpu.current_thread.as_ref().unwrap().clone();
+    let kernel_stack_top = VirtAddr(current_thread.kernel_stack.0 + Thread::KERNEL_STACK_PAGES as u64 * 0x1000);
+    this_cpu.set_kernel_stack(kernel_stack_top);
+
+    current_thread
 }
 
 pub fn thread_start() -> ! {
-    CriticalGuard::with(finish_context_switch);
+    let current_thread = CriticalGuard::with(finish_context_switch);
 
     unsafe { enable_interrupts(); }
 
-    let VirtAddr(entry_point_ptr) = CriticalGuard::with(|| CpuInfo::get_current().current_thread.as_ref().unwrap().entry_point);
-    let entry_point: fn() = unsafe {
-        core::mem::transmute(entry_point_ptr)
-    };
+    if let Some(user_frame) = current_thread.user_frame {
+        unsafe {
+            super::switch_to_usermode(core::ptr::from_ref(&user_frame));
+        }
+    } else {
+        let VirtAddr(entry_point_ptr) = CriticalGuard::with(|| CpuInfo::get_current().current_thread.as_ref().unwrap().entry_point);
+        let entry_point: fn() = unsafe {
+            core::mem::transmute(entry_point_ptr)
+        };
 
-    entry_point();
+        entry_point();
+    }
 
     super::exit_thread(-1);
 }

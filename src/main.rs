@@ -13,7 +13,7 @@ pub mod syscall;
 
 use core::panic::PanicInfo;
 
-use crate::smp::CpuInfo;
+use crate::{mm::VirtAddr, smp::CpuInfo};
 
 /// This function is called on panic.
 #[panic_handler]
@@ -36,6 +36,7 @@ fn panic(info: &PanicInfo) -> ! {
 }
 
 #[repr(C)]
+#[derive(Default, Debug, Clone, Copy)]
 pub struct TrapFrame {
     // In the reverse order they are pushed:
     pub ds: u64, // Data segment pushed by us
@@ -65,6 +66,20 @@ pub struct TrapFrame {
     pub rflags: u64,
     pub rsp: u64,
     pub ss: u64,
+}
+
+impl TrapFrame {
+    fn user_frame(stack_top: VirtAddr, entry_point: VirtAddr) -> Self {
+        Self {
+            ds: 0x1B,
+            ss: 0x1B,
+            rsp: stack_top.0,
+            rflags: 0x202,
+            cs: 0x23,
+            rip: entry_point.0,
+            ..Default::default()
+        }
+    }
 }
 
 type ISRHandler = extern "C" fn(regs: *mut TrapFrame);
@@ -115,6 +130,4 @@ pub extern "C" fn draw_framebuffer(
             }
         }
     }
-
-    panic!("just panicking for no reason");
 }

@@ -87,6 +87,16 @@ impl CpuInfo {
         }
     }
 
+    pub fn set_kernel_stack(&mut self, stack_top: VirtAddr) {
+        self.kernel_stack_top = stack_top;
+        
+        let tss = unsafe {
+            &mut *self.tss
+        };
+
+        tss.rsp0 = stack_top.0;
+    }
+
     fn get_this(lapic_id: u8) -> &'static CpuInfo {
         unsafe {
             let cpu = get_cpu(lapic_id) as *const CpuInfo;

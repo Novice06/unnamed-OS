@@ -67,7 +67,7 @@ pub struct Process {
     pub pid: PID,
     ppid: AtomicUsize,
     state: AtomicU8,
-    addr_space: Mutex<AddressSpace>,
+    pub addr_space: Mutex<AddressSpace>,
     cr3: PhyAddr,
     children: SpinLockIrqSave<Vec<Arc<Process>>>,
     threads: SpinLockIrqSave<Vec<Weak<Thread>>>,

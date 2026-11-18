@@ -5,6 +5,7 @@ use crate::{error, info, lock::{rwlock::RwLock, spinlock::SpinLockIrqSave}, vfs:
 mod tempfs;
 mod cpio;
 mod ffi;
+pub mod elf;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum VfsError {

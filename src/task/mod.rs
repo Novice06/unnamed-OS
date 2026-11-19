@@ -19,9 +19,6 @@ type TID = usize;
 #[derive(Debug)]
 pub enum TaskError {
     OutOfMemory,
-    ProcessNotMySon,    // hee heee !
-    ProcessIsChildless,
-    ProcessStillRunning,
 }
 
 pub struct OpenFile {
@@ -36,6 +33,7 @@ impl OpenFile {
     }
 }
 
+#[derive(Clone)]
 pub struct FileDescriptor {
     pub file: Arc<OpenFile>,
     pub is_cloexec: bool,
@@ -72,7 +70,7 @@ pub struct Process {
     children: SpinLockIrqSave<Vec<Arc<Process>>>,
     threads: SpinLockIrqSave<Vec<Weak<Thread>>>,
     status: AtomicU32,
-    pub resources: SpinLockIrqSave<[Option<FileDescriptor>; Self::MAX_RESOURCES]>,
+    pub resources: Mutex<[Option<FileDescriptor>; Self::MAX_RESOURCES]>,
     pub current_dir: Arc<dyn Vnode>,
 }
 
@@ -92,23 +90,23 @@ impl Process {
             children: SpinLockIrqSave::new(Vec::new()),
             threads: SpinLockIrqSave::new(Vec::new()),
             status: AtomicU32::new(0),
-            resources: SpinLockIrqSave::new(core::array::from_fn(|_| None)),
+            resources: Mutex::new(core::array::from_fn(|_| None)),
             current_dir: crate::vfs::ROOT_FILESYSTEM.lock().as_ref().expect("VFS not initialized").root(),
         }
     }
 
     fn new (id: PID, pid: PID, current_dir: Arc<dyn Vnode>) -> Result<Self, TaskError>{
-        let new_addr_space = PHYSICAL_MEMORY_ALLOCATOR
+        let new_cr3 = PHYSICAL_MEMORY_ALLOCATOR
         .lock()
         .alloc_page()
         .ok_or(TaskError::OutOfMemory)?;
 
-        let kernel_cr3 = MEM_get_kernel_addresspace();
         unsafe {
-            let PhyAddr(addr_space) = new_addr_space;
+            let PhyAddr(addr_space) = new_cr3;
             let addr_space = addr_space + get_hhdm();
-            let kernel_addr_space = kernel_cr3 + get_hhdm();
+            let kernel_addr_space = MEM_get_kernel_addresspace() + get_hhdm();
 
+            core::slice::from_raw_parts_mut(addr_space as *mut u8, 0x1000).fill(0);
             // higher half
             core::ptr::copy_nonoverlapping((kernel_addr_space + 256 * 8) as *mut u8, (addr_space + 256 * 8) as *mut u8, 256 * 8);
         }
@@ -117,14 +115,54 @@ impl Process {
             pid: id,
             ppid: AtomicUsize::new(pid),
             state: AtomicU8::new(ProcessState::ALIVE as u8),
-            addr_space: Mutex::new(AddressSpace::new(VirtAddr(kernel_cr3 + get_hhdm()))),
-            cr3: PhyAddr(kernel_cr3),
+            addr_space: Mutex::new(AddressSpace::new(VirtAddr(new_cr3.0 + get_hhdm()))),
+            cr3: new_cr3,
             children: SpinLockIrqSave::new(Vec::new()),
             threads: SpinLockIrqSave::new(Vec::new()),
             status: AtomicU32::new(0),
-            resources: SpinLockIrqSave::new(core::array::from_fn(|_| None)),
+            resources: Mutex::new(core::array::from_fn(|_| None)),
             current_dir
         })
+    }
+
+    pub fn give_birth(&self, child_id: PID) -> Result<Self, TaskError> {
+
+        let new_cr3 = PHYSICAL_MEMORY_ALLOCATOR
+        .lock()
+        .alloc_page()
+        .ok_or(TaskError::OutOfMemory)?;
+
+        unsafe {
+            let PhyAddr(addr_space) = new_cr3;
+            let addr_space = addr_space + get_hhdm();
+            let kernel_addr_space = MEM_get_kernel_addresspace() + get_hhdm();
+
+            core::slice::from_raw_parts_mut(addr_space as *mut u8, 0x1000).fill(0);
+            // higher half
+            core::ptr::copy_nonoverlapping((kernel_addr_space + 256 * 8) as *mut u8, (addr_space + 256 * 8) as *mut u8, 256 * 8);
+        }
+
+        let child = Self { 
+            pid: child_id,
+            ppid: AtomicUsize::new(self.pid),
+            state: AtomicU8::new(ProcessState::ALIVE as u8),
+            addr_space: Mutex::new(AddressSpace::new(VirtAddr(new_cr3.0 + get_hhdm()))),
+            cr3: new_cr3,
+            children: SpinLockIrqSave::new(Vec::new()),
+            threads: SpinLockIrqSave::new(Vec::new()),
+            status: AtomicU32::new(0),
+            resources: Mutex::new(core::array::from_fn(|_| None)),
+            current_dir: self.current_dir.clone()
+        };
+        AddressSpace::clone(&*self.addr_space.lock(), &mut *child.addr_space.lock());
+
+        for (idx, resource) in self.resources.lock().iter().enumerate() {
+            if let Some(res) = resource {
+                child.resources.lock()[idx] = Some(res.clone());
+            }
+        }
+
+        Ok(child)
     }
 
     pub fn get_state(&self) -> ProcessState {
@@ -144,13 +182,13 @@ impl Process {
         ProcessState::from_u8(state)
     }
 
-    fn add_thread(&self, thread: Weak<Thread>) {
+    pub fn add_thread(&self, thread: Weak<Thread>) {
         self.threads.lock().push(thread);
     }
 
-    // fn add_child(&self, process: Arc<Process>) {
-    //     self.children.lock().push(process);
-    // }
+    pub fn add_child(&self, process: Arc<Process>) {
+        self.children.lock().push(process);
+    }
 
     pub fn alloc_resource(&self, res: FileDescriptor) -> Option<usize> {
         let mut resources = self.resources.lock();
@@ -158,6 +196,15 @@ impl Process {
 
         resources[index] = Some(res);
         Some(index)
+    }
+
+    pub fn close_cloexec_res(&self) {
+        let mut resources = self.resources.lock();
+        for resource in resources.iter_mut() {
+            if resource.as_ref().is_some_and(|res| res.is_cloexec) {
+                resource.take();
+            }
+        }
     }
 }
 
@@ -282,15 +329,15 @@ impl Drop for Thread {
 static NEXT_PID: AtomicUsize = AtomicUsize::new(0);
 static NEXT_TID: AtomicUsize = AtomicUsize::new(0);
 
-fn alloc_pid() -> PID {
+pub fn alloc_pid() -> PID {
     NEXT_PID.fetch_add(1, Relaxed)
 }
 
-fn alloc_tid() -> TID {
+pub fn alloc_tid() -> TID {
     NEXT_TID.fetch_add(1, Relaxed)
 }
 
-struct TaskManager {
+pub struct TaskManager {
     processes: SpinLockIrqSave<BTreeMap<PID, Arc<Process>>>,
     threads: SpinLockIrqSave<BTreeMap<TID, Arc<Thread>>>,
     reaper_thread_id: AtomicUsize,
@@ -307,7 +354,7 @@ impl TaskManager {
         }
     }
 
-    fn add_process(&self, process: Process, id: PID) -> Arc<Process> {
+    pub fn add_process(&self, process: Process, id: PID) -> Arc<Process> {
         
         let process_arc = Arc::new(process);
         
@@ -316,7 +363,7 @@ impl TaskManager {
         process_arc
     }
 
-    fn add_thread(&self, thread: Thread, id: TID) -> Arc<Thread> {
+    pub fn add_thread(&self, thread: Thread, id: TID) -> Arc<Thread> {
         let thread_arc = Arc::new(thread);
 
         self.threads.lock().insert(id, thread_arc.clone());
@@ -357,7 +404,7 @@ impl TaskManager {
     }
 }
 
-static TASK_MANAGER: TaskManager = TaskManager::new();
+pub static TASK_MANAGER: TaskManager = TaskManager::new();
 
 fn reaper_thread() {
     loop {
@@ -378,18 +425,24 @@ fn reaper_thread() {
     }
 }
 
-pub fn wait_anychildproc() -> Result<(PID, u32), TaskError> {
+pub enum WaitError {
+    ProcessNotMySon,    // hee heee !
+    ProcessIsChildless,
+    ProcessStillRunning,
+}
+
+pub fn wait_anychildproc() -> Result<(PID, u32), WaitError> {
     let current = CriticalGuard::with(|| CpuInfo::get_current().current_thread.as_ref().unwrap().process.clone());
     let mut children = current.children.lock();
 
     if children.is_empty() {
-        return Err(TaskError::ProcessIsChildless);
+        return Err(WaitError::ProcessIsChildless);
     }
 
     let Some(zombie_idx) = children
     .iter()
     .position(|proc| proc.test_and_set_state(ProcessState::ZOMBIE, ProcessState::DEAD) == ProcessState::ZOMBIE) else {
-        return Err(TaskError::ProcessStillRunning);
+        return Err(WaitError::ProcessStillRunning);
     };
     
 
@@ -400,14 +453,14 @@ pub fn wait_anychildproc() -> Result<(PID, u32), TaskError> {
     Ok((zombie.pid, zombie.status.load(Acquire)))
 }
 
-pub fn wait_process(id: PID) -> Result<(PID, u32), TaskError> {
+pub fn wait_process(id: PID) -> Result<(PID, u32), WaitError> {
     let current = CriticalGuard::with(|| CpuInfo::get_current().current_thread.as_ref().unwrap().process.clone());
     let mut children = current.children.lock();
 
-    let child_idx = children.iter().position(|proc| proc.pid == id).ok_or(TaskError::ProcessNotMySon)?.clone();
+    let child_idx = children.iter().position(|proc| proc.pid == id).ok_or(WaitError::ProcessNotMySon)?.clone();
 
     if children[child_idx].test_and_set_state(ProcessState::ZOMBIE, ProcessState::DEAD) != ProcessState::ZOMBIE {
-        return Err(TaskError::ProcessStillRunning);
+        return Err(WaitError::ProcessStillRunning);
     }
 
     let child = children.remove(child_idx);

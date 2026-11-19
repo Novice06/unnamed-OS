@@ -3,8 +3,8 @@ use alloc::vec::Vec;
 use crate::mm::{self, VirtAddr, paging};
 
 const PAGE_SIZE: u64 = 0x1000;
-const USER_SPACE_START: u64 = 0x0000000000400000;
-const USER_SPACE_END: u64 = 0x0000800000000000;
+pub const USER_SPACE_START: u64 = 0x0000000000400000;
+pub const USER_SPACE_END: u64 = 0x0000800000000000;
 
 pub type VmFlags = u8;
 
@@ -49,6 +49,10 @@ impl VirtualArea {
 
     pub fn size(&self) -> u64 {
         self.pages * PAGE_SIZE
+    }
+
+    pub fn can_write(&self) -> bool {
+        (self.flags & VM_WRITE) != 0
     }
 
     pub fn to_paging_flags(flags: VmFlags) -> u8 {

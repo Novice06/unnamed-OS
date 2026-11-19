@@ -301,6 +301,15 @@ pub fn alloc_pages_low(pml4_addr: VirtAddr, VirtAddr(virt): VirtAddr, num_pages:
             1,
             flags
         );
+
+        unsafe {
+            let frame_slice = core::slice::from_raw_parts_mut(
+                (frame.0 + super::get_hhdm()) as *mut u8, 
+                0x1000
+            );
+
+            frame_slice.fill(0);
+        }
     }
 
     Ok(())

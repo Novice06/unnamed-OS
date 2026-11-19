@@ -1,6 +1,6 @@
 use alloc::{sync::Arc, vec::Vec};
 
-use crate::{mm::{VirtAddr, get_hhdm, paging, virtual_area::{self, VirtualArea}}, task::Process, vfs::{VfsError, Vnode}};
+use crate::{mm::{VirtAddr, get_hhdm, paging, virtual_area::{self, AddressSpace, VirtualArea}}, vfs::{VfsError, Vnode}};
 
 #[repr(C)]
 #[derive(Default)]
@@ -61,7 +61,7 @@ impl From<VfsError> for ElfError {
     }
 }
 
-pub fn load_in(proc: Arc<Process>, file: Arc<dyn Vnode>) -> Result<Option<VirtAddr>, ElfError>{
+pub fn load_in(addr_space: &mut AddressSpace, file: Arc<dyn Vnode>) -> Result<VirtAddr, ElfError>{
     let header = {
         let mut header = Elf64_Ehdr::default();
 
@@ -96,8 +96,6 @@ pub fn load_in(proc: Arc<Process>, file: Arc<dyn Vnode>) -> Result<Option<VirtAd
 
     if header.e_phentsize as usize != core::mem::size_of::<Elf64_Phdr>() { return Err(ElfError::InvalidProgramHeader); }
 
-
-    let mut addr_space = proc.addr_space.lock();
     addr_space.clean();
 
     let program_headers = {
@@ -177,9 +175,9 @@ pub fn load_in(proc: Arc<Process>, file: Arc<dyn Vnode>) -> Result<Option<VirtAd
         }
     }
 
-    let entry_point = if header.e_entry != 0 { Some(VirtAddr(header.e_entry)) } else {
-        None
-    };
+    if header.e_entry == 0 { 
+        return Err(ElfError::InvalidHeader);
+    }
 
-    Ok(entry_point)
+    Ok(VirtAddr(header.e_entry))
 }

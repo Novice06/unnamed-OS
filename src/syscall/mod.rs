@@ -1,7 +1,9 @@
-pub mod fs;
-pub mod proc;
+mod fs;
+mod proc;
 
-use crate::{TrapFrame, disable_interrupts, enable_interrupts, vfs::VfsError};
+use alloc::{string::String, vec::Vec};
+
+use crate::{TrapFrame, disable_interrupts, enable_interrupts, lock::crit_sec::CriticalGuard, mm::{ VirtAddr, paging, virtual_area}, smp::CpuInfo, syscall::{fs::{sys_close, sys_openat, sys_read, sys_write}, proc::{sys_execve, sys_fork, sys_wait4}}, task::TaskError, vfs::VfsError};
 
 #[repr(i32)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -101,16 +103,391 @@ impl From<VfsError> for Errno {
     }
 }
 
+impl From<TaskError> for Errno {
+    fn from(value: TaskError) -> Self {
+        match value {
+            TaskError::OutOfMemory => Self::ENOMEM
+        }
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn SYSCALL_dispatcher(frame: *mut TrapFrame) {
     unsafe {enable_interrupts();}
 
-    crate::info!("yeahh triggered a syscall !!");
-
     let frame = unsafe {
-        &*frame
+        &mut *frame
     };
-    crate::info!("frame: {:x?}", frame);
+
+    if let Some(Some(sys)) = SYSCALL_TABLE.get(frame.rax as usize) {
+        sys(frame);
+    } else {
+        frame.rax = Errno::ENOSYS.to_ret() as u64;
+    };
 
     unsafe {disable_interrupts();}
+}
+
+const NUM_SYSCALLS: usize = 512;
+const MAX_STRING_LEN: usize = 0x1000;
+const MAX_RW_COUNT: usize = 1024 * 1024; // 1 MiB
+
+macro_rules! return_errno {
+    ($frame:expr, $errno:expr) => {{
+        $frame.rax = $errno.to_ret() as u64;
+        return;
+    }};
+}
+
+type SyscallFn = fn(frame: &mut TrapFrame);
+
+static SYSCALL_TABLE: [Option<SyscallFn>; NUM_SYSCALLS] = {
+    let mut table: [Option<SyscallFn>; NUM_SYSCALLS] = [None; NUM_SYSCALLS];
+
+    table[257] = Some(openat);
+    table[3] = Some(close);
+    table[0] = Some(read);
+    table[1] = Some(write);
+    table[61] = Some(wait4);
+    table[57] = Some(fork);
+    table[59] = Some(execve);
+
+    table
+};
+
+fn access_ok(ptr: u64, len: u64) -> bool {
+
+    if ptr < virtual_area::USER_SPACE_START {
+        return false;
+    }
+
+    if ptr >= virtual_area::USER_SPACE_END {
+        return false;
+    }
+ 
+    if ptr.checked_add(len).is_none() {
+        return false;
+    }
+
+    if ptr + len > virtual_area::USER_SPACE_END {
+        return false;
+    }
+
+    return true;
+}
+
+fn copy_from_user(dst: *mut u8, src_user: u64, len: usize) -> Result<(), Errno> {
+
+    let current_process = CriticalGuard::with(|| CpuInfo::get_current().current_thread.as_ref().unwrap().process.clone());
+    let addr_space = current_process.addr_space.lock();
+
+    if !access_ok(src_user, len as u64) {
+        return Err(Errno::EFAULT);
+    }
+
+    let mut validated_len = 0u64;
+    while (validated_len as usize) < len {
+        let ptr = src_user + validated_len;
+        let page = ptr & !(0xFFF);
+        let offset = ptr & 0xFFF;
+
+        addr_space
+        .find(VirtAddr(page))
+        .ok_or(Errno::EFAULT)?;
+
+        let Some(_) = paging::get_physical(addr_space.pml4, VirtAddr(page)) else {
+            panic!("something is wrong with address space but with demand paging we should map this page");
+            // return Err(Errno::EFAULT);
+        };
+
+        validated_len += 0x1000 - offset;
+    }
+
+    unsafe {
+        core::ptr::copy_nonoverlapping(src_user as *mut u8, dst, len);
+    }
+
+    return Ok(());
+}
+
+fn copy_to_user(dest_user: u64, src: *const u8, len: usize) -> Result<(), Errno> {
+    let current_process = CriticalGuard::with(|| CpuInfo::get_current().current_thread.as_ref().unwrap().process.clone());
+    let addr_space = current_process.addr_space.lock();
+
+    if !access_ok(dest_user, len as u64) {
+        return Err(Errno::EFAULT);
+    }
+
+    let mut validated_len = 0u64;
+    while (validated_len as usize) < len {
+        let ptr = dest_user + validated_len;
+        let page = ptr & !(0xFFF);
+        let offset = ptr & 0xFFF;
+
+        addr_space
+        .find(VirtAddr(page))
+        .ok_or(Errno::EFAULT)?
+        .can_write()
+        .ok_or(Errno::EFAULT)?;
+
+        let Some(_) = paging::get_physical(addr_space.pml4, VirtAddr(page)) else {
+            panic!("something is wrong with address space but with demand paging we should map this page");
+            // return Err(Errno::EFAULT);
+        };
+
+        validated_len += 0x1000 - offset;
+    }
+
+    unsafe {
+        core::ptr::copy_nonoverlapping(src, dest_user as *mut u8, len);
+    }
+
+    return Ok(());
+}
+
+fn copy_string_from_user(src_user: u64, max_len: u64) -> Result<String, Errno> {
+    let current_process = CriticalGuard::with(|| CpuInfo::get_current().current_thread.as_ref().unwrap().process.clone());
+    let addr_space = current_process.addr_space.lock();
+
+    let mut s = Vec::new();
+    let mut bytes_read = 0u64;
+
+    while bytes_read < max_len {
+        let Some(ptr) = src_user.checked_add(bytes_read) else {
+            return Err(Errno::EFAULT);
+        };
+        let page = ptr & !(0xFFF);
+        let offset = ptr & 0xFFF;
+        let to_read = (0x1000 - offset).min(max_len - bytes_read);
+
+        if !access_ok(ptr, to_read) {
+            return Err(Errno::EFAULT); // -EFAULT
+        }
+
+        addr_space
+        .find(VirtAddr(page))
+        .ok_or(Errno::EFAULT)?;
+
+        let Some(_) = paging::get_physical(addr_space.pml4, VirtAddr(page)) else {
+            panic!("something is wrong with address space but with demand paging we should map this page");
+            // return Err(Errno::EFAULT);
+        };
+
+        for i in 0..to_read {
+            let byte = unsafe { *((ptr + i) as *const u8) };
+
+            if byte == 0 {  // end of string !
+
+                let ret = String::from_utf8(s).map_err(|_| Errno::EILSEQ)?;
+                return Ok(ret);
+            }
+
+            s.push(byte);
+        }
+
+        bytes_read += to_read;
+    }
+
+
+    Err(Errno::ENAMETOOLONG)
+}
+
+fn openat(frame: &mut TrapFrame) {
+
+    let dirfd = frame.rdi as usize;
+    let path = match copy_string_from_user(frame.rsi, MAX_STRING_LEN as u64) {
+        Ok(path) => path,
+        Err(e) => return_errno!(frame, e),
+    };
+    let flags = frame.rdx as u32;
+    let mode = frame.r10 as u32;
+
+    match sys_openat(dirfd, &path, flags, mode) {
+        Ok(ret) => frame.rax = ret as u64,
+        Err(e) => frame.rax = e.to_ret() as u64,
+    }
+}
+
+fn close(frame: &mut TrapFrame) {
+    if let Err(e) = sys_close(frame.rdi as usize) {
+        frame.rax = e.to_ret() as u64;
+    } else {
+        frame.rax = 0;
+    }
+}
+
+fn read(frame: &mut TrapFrame) {
+
+    let fd = frame.rdi as usize;
+    let count = if frame.rdx as usize > MAX_RW_COUNT {
+        return_errno!(frame, Errno::EINVAL)
+    } else {
+        frame.rdx as usize
+    };
+    let mut buffer = {
+        let mut buffer:Vec<u8> = Vec::new();
+        if let Some(_) = buffer.try_reserve(count).err() {
+            return_errno!(frame, Errno::ENOMEM)
+        };
+        buffer.resize(count, 0);
+
+        buffer
+    };
+
+    match sys_read(fd, &mut buffer) {
+        Ok(ret) => {
+            if let Some(e) = copy_to_user(frame.rsi, buffer.as_mut_ptr(), ret).err() {
+                return_errno!(frame, e)
+            }
+
+            frame.rax = ret as u64
+        },
+        Err(e) => frame.rax = e.to_ret() as u64,
+    }
+}
+
+fn write(frame: &mut TrapFrame) {
+    let fd = frame.rdi as usize;
+    let count = if frame.rdx as usize > MAX_RW_COUNT {
+        return_errno!(frame, Errno::EINVAL)
+    } else {
+        frame.rdx as usize
+    };
+    let buffer = {
+        let mut buffer:Vec<u8> = Vec::new();
+        if let Some(_) = buffer.try_reserve(count).err() {
+            return_errno!(frame, Errno::ENOMEM)
+        };
+        buffer.resize(count, 0);
+
+        if let Some(e) = copy_from_user(buffer.as_mut_ptr(), frame.rsi, buffer.len()).err() {
+            return_errno!(frame, e)
+        }
+
+        buffer
+    };
+    
+    match sys_write(fd, &buffer) {
+        Ok(ret) => frame.rax = ret as u64,
+        Err(e) => frame.rax = e.to_ret() as u64,
+    }
+}
+
+fn wait4(frame: &mut TrapFrame) {
+    let pid = frame.rdi as isize;
+    let mut status: u32 = 0;
+    let options = frame.rdx as i32;
+    let mut usage = proc::Rusage::default();
+
+    match sys_wait4(pid, &mut status, options, &mut usage) {
+        Ok(id) => {
+            if frame.rsi != 0 {
+                if let Some(e) = copy_to_user(frame.rsi, core::ptr::from_ref(&status) as *const u8, core::mem::size_of_val(&status)).err() {
+                    return_errno!(frame, e)
+                }
+            }
+            if frame.r10 != 0 {
+                if let Some(e) = copy_to_user(frame.r10, core::ptr::from_ref(&usage) as *const u8, core::mem::size_of_val(&usage)).err() {
+                    return_errno!(frame, e)
+                }
+            }
+            
+            frame.rax = id as u64;
+        },
+
+        Err(e) => frame.rax = e.to_ret() as u64
+    }
+}
+
+fn fork(frame: &mut TrapFrame) {
+    match sys_fork(frame) {
+        Ok(id) => frame.rax = id as u64,
+        Err(e) => frame.rax = e.to_ret() as u64,
+    }
+}
+
+fn execve(frame: &mut TrapFrame) {
+    let path=  match copy_string_from_user(frame.rdi, MAX_STRING_LEN as u64) {
+        Ok(p) => p,
+        Err(e) => return_errno!(frame, e)
+    };
+
+    let argv = {
+        let mut ptrs: Vec<u64> = Vec::new();
+        let mut early_break = false;
+        for i in 0..1024 {
+            let mut ptr = 0u64;
+            let Some(src_ptr) = frame.rsi.checked_add(i * core::mem::size_of_val(&ptr) as u64) else {
+                return_errno!(frame, Errno::EFAULT)
+            };
+            if let Some(e) = copy_from_user(core::ptr::from_mut(&mut ptr) as *mut u8, src_ptr, core::mem::size_of_val(&ptr)).err() {
+                return_errno!(frame, e)
+            }
+
+            if (ptr as *const u8).is_null() {
+                early_break = true;
+                break;
+            }
+
+            ptrs.push(ptr);
+        }
+
+        if !early_break {
+            return_errno!(frame, Errno::E2BIG)
+        }
+
+        let mut argv: Vec<String> = Vec::new();
+        for s in ptrs {
+            let arg = match copy_string_from_user(s, MAX_STRING_LEN as u64) {
+                Ok(arg) => arg,
+                Err(e) => return_errno!(frame, e),
+            };
+
+            argv.push(arg);
+        }
+
+        argv
+    };
+
+    let envp = {
+        let mut ptrs: Vec<u64> = Vec::new();
+        let mut early_break = false;
+        for i in 0..1024 {
+            let mut ptr = 0u64;
+            let Some(src_ptr) = frame.rdx.checked_add(i * core::mem::size_of_val(&ptr) as u64) else {
+                return_errno!(frame, Errno::EFAULT)
+            };
+            if let Some(e) = copy_from_user(core::ptr::from_mut(&mut ptr) as *mut u8, src_ptr, core::mem::size_of_val(&ptr)).err() {
+                return_errno!(frame, e)
+            }
+
+            if (ptr as *const u8).is_null() {
+                early_break = true;
+                break;
+            }
+
+            ptrs.push(ptr);
+        }
+
+        if !early_break {
+            return_errno!(frame, Errno::E2BIG)
+        }
+
+        let mut envp: Vec<String> = Vec::new();
+        for s in ptrs {
+            let arg = match copy_string_from_user(s, MAX_STRING_LEN as u64) {
+                Ok(arg) => arg,
+                Err(e) => return_errno!(frame, e),
+            };
+
+            envp.push(arg);
+        }
+
+        envp
+    };
+
+    match sys_execve(path, argv, envp) {
+        Ok(_) => unreachable!("exceve returned on success"),
+        Err(e) => return_errno!(frame, e),
+    }
 }

@@ -10,8 +10,14 @@ context_switch:
 
     mov [rsi], rsp      ; save old stack
     mov rsp, rdx      ; load new stack
+    
+    mov rax, cr3
+    cmp rax, rdi
+    je .sameVAS
+
     mov cr3, rdi
 
+.sameVAS:
     pop r15
     pop r14
     pop r13

@@ -34,6 +34,15 @@ LDFLAGS = \
 
 ASMFLAGS = -f elf64 -Wall
 
+QEMU_FLAGS = \
+	-machine q35 \
+	-m 512M \
+	-smp 2 \
+	-drive if=pflash,format=raw,readonly=on,file=OVMF_CODE_4M.fd \
+	-drive if=pflash,format=raw,file=OVMF_VARS_4M.fd \
+	-drive if=ide,file=build/image.hdd,format=raw \
+	-serial stdio
+
 SRCFILES = $(shell find -L src -type f 2>/dev/null | LC_ALL=C sort)
 CFILES = $(filter %.c,$(SRCFILES))
 ASMFILES = $(filter %.asm,$(SRCFILES))
@@ -63,7 +72,11 @@ dependencies:
 		make -C limine-binary; \
 	fi
 
-initrd:
+userspace:
+	$(MAKE) -C user userspace
+
+initrd: userspace
+	cp -r user/bin initrd
 	cd initrd && find . -print0 -mindepth 1 | cpio --null -ov --format=newc > ../build/initrd.cpio
 
 image: build/unnamed.elf initrd
@@ -90,28 +103,14 @@ image: build/unnamed.elf initrd
 	mcopy -i build/image.hdd@@1M limine-binary/BOOTIA32.EFI ::/EFI/BOOT
 
 run: image
-	qemu-system-x86_64 \
-	-m 512M \
-	-drive if=pflash,format=raw,readonly=on,file=OVMF_CODE_4M.fd \
-    -drive if=pflash,format=raw,file=OVMF_VARS_4M.fd \
-    -drive if=ide,file=build/image.hdd,format=raw \
-	-serial stdio 2>&1 \
-	-smp 2
+	qemu-system-x86_64 $(QEMU_FLAGS)
 
 run-kvm: image
-	qemu-system-x86_64 \
-    -enable-kvm \
-    -cpu host \
-    -machine q35 \
-    -m 512M \
-    -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE_4M.fd \
-    -drive if=pflash,format=raw,file=OVMF_VARS_4M.fd \
-    -drive if=ide,file=build/image.hdd,format=raw \
-    -serial stdio 2>&1 \
-    -smp 2
+	qemu-system-x86_64 -enable-kvm -cpu host $(QEMU_FLAGS)
 
 clean:
 	rm -rf build/
+	$(MAKE) -C user clean
 	cargo clean
 
 .PHONY: all clean run run-kvm image dependencies initrd

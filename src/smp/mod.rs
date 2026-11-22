@@ -5,6 +5,7 @@ use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use crate::{error, lock::{crit_sec::CriticalGuard, spinlock::SpinLockIrqSave}, mm::VirtAddr, smp::IpiAction::{HALT, TlbFlush}, task::Thread};
 
 const IPI_VECTOR: u8 = 0x40;
+const FS_BASE_MSR: u32 = 0xC0000100;
 
 #[repr(C)]
 struct LapicIds
@@ -87,14 +88,17 @@ impl CpuInfo {
         }
     }
 
-    pub fn set_kernel_stack(&mut self, stack_top: VirtAddr) {
-        self.kernel_stack_top = stack_top;
+    pub fn set_kernel_stack(&mut self, kernel_stack_top: VirtAddr) {
+        self.kernel_stack_top = kernel_stack_top;
         
         let tss = unsafe {
             &mut *self.tss
         };
+        tss.rsp0 = kernel_stack_top.0;
+    }
 
-        tss.rsp0 = stack_top.0;
+    pub fn set_fs_base(&mut self, fs_base: u64) {
+        unsafe { crate::write_msr(FS_BASE_MSR, fs_base); }
     }
 
     fn get_this(lapic_id: u8) -> &'static CpuInfo {

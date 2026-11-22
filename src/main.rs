@@ -10,6 +10,7 @@ pub mod display;
 pub mod task;
 pub mod vfs;
 pub mod syscall;
+pub mod drivers;
 
 use core::panic::PanicInfo;
 
@@ -93,6 +94,7 @@ unsafe extern "C" {
     fn enable_interrupts();
     fn disable_interrupts();
     fn lapic_send_eoi();
+    fn write_msr(reg: u32, value: u64);
 
     fn ISR_registerNewHandler(interrupt: i32, handler: ISRHandler);
 

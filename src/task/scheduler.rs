@@ -75,8 +75,9 @@ pub fn yield_task() {
 
 fn finish_context_switch() -> Arc<Thread> {
     let this_cpu = CpuInfo::get_current();
-    let previous_thread = this_cpu.previous_thread.take().expect("impossible !! we're finishing a context switch without a previous task?");
 
+    let previous_thread = this_cpu.previous_thread.take().expect("impossible !! we're finishing a context switch without a previous task?");
+    previous_thread.save_sse();
 
     // if its not the idle thread
     if !Arc::ptr_eq(&previous_thread, this_cpu.idle_thread.as_ref().unwrap()) {
@@ -101,8 +102,11 @@ fn finish_context_switch() -> Arc<Thread> {
     }
 
     let current_thread = this_cpu.current_thread.as_ref().unwrap().clone();
+    current_thread.restore_sse();
+
     let kernel_stack_top = VirtAddr(current_thread.kernel_stack.0 + Thread::KERNEL_STACK_PAGES as u64 * 0x1000);
     this_cpu.set_kernel_stack(kernel_stack_top);
+    this_cpu.set_fs_base(current_thread.get_fs());
 
     current_thread
 }

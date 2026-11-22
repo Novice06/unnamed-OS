@@ -1,9 +1,9 @@
-mod fs;
-mod proc;
+pub mod fs;
+pub mod proc;
 
 use alloc::{string::String, vec::Vec};
 
-use crate::{TrapFrame, disable_interrupts, enable_interrupts, lock::crit_sec::CriticalGuard, mm::{ VirtAddr, paging, virtual_area}, smp::CpuInfo, syscall::{fs::{sys_close, sys_openat, sys_read, sys_write}, proc::{sys_execve, sys_fork, sys_wait4}}, task::TaskError, vfs::VfsError};
+use crate::{TrapFrame, disable_interrupts, enable_interrupts, lock::crit_sec::CriticalGuard, mm::{ VirtAddr, paging, virtual_area}, smp::CpuInfo, syscall::{fs::{sys_close, sys_openat, sys_read, sys_write, sys_writev}, proc::{sys_arch_prctl, sys_execve, sys_exit_group, sys_fork, sys_set_tid_address, sys_wait4}}, task::TaskError, vfs::VfsError};
 
 #[repr(i32)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -99,6 +99,7 @@ impl From<VfsError> for Errno {
             VfsError::EntryExist => Errno::EEXIST,
             VfsError::InvalidName => Errno::EINVAL,
             VfsError::Busy => Errno::EBUSY,
+            VfsError::NotSupported => Errno::ENOSYS,
         }
     }
 }
@@ -145,12 +146,18 @@ static SYSCALL_TABLE: [Option<SyscallFn>; NUM_SYSCALLS] = {
     let mut table: [Option<SyscallFn>; NUM_SYSCALLS] = [None; NUM_SYSCALLS];
 
     table[257] = Some(openat);
+    table[2] = Some(open);
     table[3] = Some(close);
     table[0] = Some(read);
     table[1] = Some(write);
+    table[20] = Some(writev);
     table[61] = Some(wait4);
     table[57] = Some(fork);
     table[59] = Some(execve);
+    table[16] = Some(ioctl);
+    table[158] = Some(arch_prctl);
+    table[218] = Some(set_tid_address);
+    table[231] = Some(exit_group);
 
     table
 };
@@ -308,6 +315,20 @@ fn openat(frame: &mut TrapFrame) {
     }
 }
 
+fn open(frame: &mut TrapFrame) {
+    let path = match copy_string_from_user(frame.rdi, MAX_STRING_LEN as u64) {
+        Ok(path) => path,
+        Err(e) => return_errno!(frame, e),
+    };
+    let flags = frame.rsi as u32;
+    let mode = frame.rdx as u32;
+
+    match sys_openat(fs::AT_FDCWD as usize, &path, flags, mode) {
+        Ok(ret) => frame.rax = ret as u64,
+        Err(e) => frame.rax = e.to_ret() as u64,
+    }
+}
+
 fn close(frame: &mut TrapFrame) {
     if let Err(e) = sys_close(frame.rdi as usize) {
         frame.rax = e.to_ret() as u64;
@@ -319,11 +340,8 @@ fn close(frame: &mut TrapFrame) {
 fn read(frame: &mut TrapFrame) {
 
     let fd = frame.rdi as usize;
-    let count = if frame.rdx as usize > MAX_RW_COUNT {
-        return_errno!(frame, Errno::EINVAL)
-    } else {
-        frame.rdx as usize
-    };
+    let count = (frame.rdx as usize).min(MAX_RW_COUNT);
+
     let mut buffer = {
         let mut buffer:Vec<u8> = Vec::new();
         if let Some(_) = buffer.try_reserve(count).err() {
@@ -348,11 +366,8 @@ fn read(frame: &mut TrapFrame) {
 
 fn write(frame: &mut TrapFrame) {
     let fd = frame.rdi as usize;
-    let count = if frame.rdx as usize > MAX_RW_COUNT {
-        return_errno!(frame, Errno::EINVAL)
-    } else {
-        frame.rdx as usize
-    };
+    let count = (frame.rdx as usize).min(MAX_RW_COUNT);
+
     let buffer = {
         let mut buffer:Vec<u8> = Vec::new();
         if let Some(_) = buffer.try_reserve(count).err() {
@@ -371,6 +386,72 @@ fn write(frame: &mut TrapFrame) {
         Ok(ret) => frame.rax = ret as u64,
         Err(e) => frame.rax = e.to_ret() as u64,
     }
+}
+
+fn writev(frame: &mut TrapFrame) {
+
+    #[repr(C)]
+    #[derive(Default, Debug)]
+    struct Iovec {
+        iov_base: *mut u8,
+        iov_len: usize,
+    }
+
+    let fd = frame.rdi as usize;
+    let iovcnt = if frame.rdx > 1024 {
+        return_errno!(frame, Errno::EINVAL)
+    } else {
+        frame.rdx
+    };
+
+    let iovs = {
+        let mut iovs: Vec<Iovec> = Vec::with_capacity(iovcnt as usize);
+        iovs.resize_with(iovcnt as usize, || unsafe {
+            core::mem::zeroed()
+        });
+
+        let iov_slice = unsafe {
+            core::slice::from_raw_parts_mut(
+                iovs.as_mut_ptr() as *mut u8,
+                iovs.len() * core::mem::size_of::<Iovec>(),
+            )
+        };
+
+        if let Some(e) = copy_from_user(iov_slice.as_mut_ptr(), frame.rsi, iov_slice.len()).err() {
+            return_errno!(frame, e)
+        }
+
+        iovs
+    };
+
+    let mut buffers: Vec<Vec<u8>> = Vec::new();
+    let mut total_write = 0;
+    for iov in iovs {
+
+        if iov.iov_len <= 0 { continue; }
+    
+        let to_write = (MAX_RW_COUNT - total_write).min(iov.iov_len);
+
+        let mut buffer: Vec<u8> = Vec::with_capacity(to_write);
+        buffer.resize_with(to_write, || unsafe {
+            core::mem::zeroed()
+        });
+
+        if let Some(e) = copy_from_user(buffer.as_mut_ptr(), iov.iov_base as u64, to_write).err() {
+            return_errno!(frame, e)
+        }
+
+        buffers.push(buffer);
+
+        total_write += to_write;
+        if total_write >= MAX_RW_COUNT { break; }
+    }
+
+    match sys_writev(fd, buffers) {
+        Ok(ret) => frame.rax = ret as u64,
+        Err(e) => frame.rax = e.to_ret() as u64,
+    }
+
 }
 
 fn wait4(frame: &mut TrapFrame) {
@@ -490,4 +571,40 @@ fn execve(frame: &mut TrapFrame) {
         Ok(_) => unreachable!("exceve returned on success"),
         Err(e) => return_errno!(frame, e),
     }
+}
+
+fn ioctl(frame: &mut TrapFrame) {
+    return_errno!(frame, Errno::ENOTTY)
+}
+
+fn arch_prctl(frame: &mut TrapFrame) {
+    let code = frame.rdi as i32;
+    let addr = frame.rsi;
+
+    match sys_arch_prctl(code, VirtAddr(addr)) {
+        Ok(ret) if let Some(v) = ret => {
+            if addr != 0 {
+                if let Some(e) = copy_to_user(addr, core::ptr::from_ref(&v) as *const u8, core::mem::size_of_val(&v)).err() {
+                    return_errno!(frame, e)
+                }
+            }
+        }
+        
+        Ok(_) => (),
+
+        Err(e) => return_errno!(frame, e)
+    }
+
+    frame.rax = 0;
+}
+
+fn set_tid_address(frame: &mut TrapFrame) {
+    match sys_set_tid_address(VirtAddr(frame.rdi)) {
+        Ok(tid) => frame.rax = tid as u64,
+        Err(e) => return_errno!(frame, e)
+    }
+}
+
+fn exit_group(frame: &mut TrapFrame) {
+    sys_exit_group(frame.rdi as i32);
 }

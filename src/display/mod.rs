@@ -9,6 +9,12 @@ impl Serial {
             unsafe {crate::SERIAL_putc(byte)};
         }
     }
+
+    pub fn write(&self, bytes: &[u8]) {
+        for byte in bytes {
+            unsafe {crate::SERIAL_putc(*byte)};
+        }
+    }
 }
 
 impl Write for Serial {

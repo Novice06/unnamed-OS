@@ -18,6 +18,7 @@ impl TempFsNode {
         let kind = match vtype {
             VnodeType::VDIR => NodeKind::Dir(RwLock::new(BTreeMap::new())),
             VnodeType::VREG => NodeKind::File(RwLock::new(Vec::new())),
+            _ => todo!("implement this"),
         };
  
         Self { kind }

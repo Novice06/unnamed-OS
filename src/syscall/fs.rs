@@ -1,4 +1,4 @@
-use alloc::sync::Arc;
+use alloc::{sync::Arc, vec::Vec};
 
 use crate::{CpuInfo, lock::crit_sec::CriticalGuard, syscall::Errno, task::{FileDescriptor, OpenFile}, vfs::{self, VfsError, VnodeType}};
 
@@ -157,6 +157,49 @@ pub fn sys_write(fd: usize, buffer: &[u8]) -> Result<usize, Errno> {
         let write = file.node.write(*offset, buffer)?;
         *offset += write as u64;
 
+        Ok(write)
+    }
+}
+
+pub fn sys_writev(fd: usize, buffers: Vec<Vec<u8>>) -> Result<usize, Errno> {
+    let current_process = CriticalGuard::with(|| CpuInfo::get_current().current_thread.as_ref().unwrap().process.clone());
+
+    let file = {
+        let resources = current_process.resources.lock();
+
+        let Some(Some(resource)) = resources.get(fd) else {
+            return Err(Errno::EBADF);
+        };
+
+        resource.file.clone()
+    };
+
+    let access_mode = file.flags & O_ACCMODE;
+    if !(access_mode == O_WRONLY || access_mode == O_RDWR) {
+        return Err(Errno::EBADF);
+    }
+
+    if file.flags & O_APPEND != 0 {
+        let mut offset = file.offset.lock();
+
+        let mut file_size = 0;
+        let mut write = 0;
+        for buffer in buffers {
+            file_size = file.node.append(&buffer)?;
+            write += buffer.len();
+        }
+
+        *offset = file_size;
+        Ok(write)
+    } else {
+        let mut offset = file.offset.lock();
+
+        let mut write = 0;
+        for buffer in buffers {
+            write += file.node.write(*offset, &buffer)?;    
+        }
+
+        *offset += write as u64;
         Ok(write)
     }
 }

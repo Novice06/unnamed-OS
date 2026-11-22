@@ -4,6 +4,7 @@
 #include <cpu/gdt.h>
 #include <cpu/idt.h>
 #include <cpu/isr.h>
+#include <cpu/sse.h>
 #include <cpu/apic/lapic.h>
 #include <cpu/apic/io_apic.h>
 
@@ -20,6 +21,8 @@
 #include <task/rust_interface.h>
 
 #include <vfs/rust_interface.h>
+
+#include <drivers/rust_interface.h>
 
 #include <syscall/syscall.h>
 
@@ -73,10 +76,7 @@ void kmain_continue()
         mp_request.response->cpu_count
     );
 
-    VFS_init(initrd->address, initrd->size);
-
-    extern void VFS_test();
-    VFS_test();
+    VFS_init();
 
     // reclaime modules and executable region
     // MEM_reclaim_region(contiguous, LIMINE_MEMMAP_EXECUTABLE_AND_MODULES);
@@ -96,6 +96,9 @@ void kmain_continue()
 
     kernel_ready = true;
     LAPIC_unlock_timer();
+
+    VFS_initrd(initrd->address, initrd->size);
+    DRIVER_init();
 
     TASK_create_init_process();
 
@@ -158,6 +161,7 @@ void kmain()
 
     GDT_init_early();
     
+    enable_sse();
     IDT_init();
     ISR_init();
 

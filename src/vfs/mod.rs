@@ -1,9 +1,9 @@
 use alloc::{sync::Arc, vec::Vec};
 
-use crate::{error, info, lock::{rwlock::RwLock, spinlock::SpinLockIrqSave}, vfs::{cpio::CpioError, tempfs::TempFs}};
+use crate::{lock::{rwlock::RwLock, spinlock::SpinLockIrqSave}, vfs::{tempfs::TempFs}};
 
 mod tempfs;
-mod cpio;
+pub mod cpio;
 mod ffi;
 pub mod elf;
 
@@ -17,12 +17,15 @@ pub enum VfsError {
     EntryExist,
     InvalidName,
     Busy,
+    NotSupported,
 }
  
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum VnodeType {
     VREG,
     VDIR,
+    VCHAR,
+    VBLCK
 }
 
 pub trait Vnode {
@@ -42,7 +45,7 @@ pub trait Filesystem {
 
 struct Mount {
     covered: Arc<dyn Vnode>,
-    root: Arc<dyn Vnode>,
+    filesystem: Arc<dyn Filesystem>,
 }
 
 pub static ROOT_FILESYSTEM: SpinLockIrqSave<Option<Arc<dyn Filesystem>>> = SpinLockIrqSave::new(None);
@@ -59,7 +62,7 @@ fn follow_mounts(mut node: Arc<dyn Vnode>) -> Arc<dyn Vnode> {
             let found = mounts
                 .iter()
                 .find(|m| is_same_vnode(&m.covered, &node))
-                .map(|m| m.root.clone());
+                .map(|m| m.filesystem.root().clone());
             found
         };
  
@@ -68,6 +71,21 @@ fn follow_mounts(mut node: Arc<dyn Vnode>) -> Arc<dyn Vnode> {
             None => return node,
         }
     }
+}
+
+pub fn mount(node: Arc<dyn Vnode>, filesystem: Arc<dyn Filesystem>) -> Result<(), VfsError> {
+    if node.vtype() != VnodeType::VDIR {
+        return Err(VfsError::IsDirectory)
+    }
+
+    let new = Mount {
+        covered: node,
+        filesystem
+    };
+
+    MOUNT_POINTS.write().push(new);
+
+    Ok(())
 }
 
 pub fn resolve(path: &str, in_this_dir: Option<Arc<dyn Vnode>>) -> Result<Arc<dyn Vnode>, VfsError> {
@@ -118,39 +136,6 @@ pub fn walk_to_parent(path: &str, in_this_dir: Option<Arc<dyn Vnode>>) -> Result
     Ok((current, child))
 }
 
-pub fn init(cpio_archive: Option<&[u8]>) {
+pub fn init() {
     *ROOT_FILESYSTEM.lock() = Some(TempFs::new());
-
-    let root = ROOT_FILESYSTEM.lock().as_ref().unwrap().root();
-
-    if let Some(archive) = cpio_archive {
-        match cpio::unpack_cpio_in(&root, archive) {
-            Ok(_) => (),
-            Err(err) => {
-                match err {
-                    CpioError::Vfs(_) => error!("there was a VFS error while unpacking the cpio archive"),
-                    _ => error!("Invalid cpio Archive"),
-                }
-            }
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-extern "C" fn VFS_test() {
-    let vnode = resolve("/home/welcome.txt", None).unwrap_or_else(|_| {
-        panic!("failed to open /home/welcome.txt");
-    });
-
-    let mut buff = [0u8; 60];
-
-    vnode.read(0, &mut buff).unwrap_or_else(|_| {
-        panic!("failed to read /home/welcome.txt")
-    });
-
-    let message = core::str::from_utf8(&buff);
-    match message {
-        Ok(m) => info!("data read: {m}"),
-        Err(_) => error!("failed to convert the content into string but here is the raw data {:?}", buff),
-    }
 }

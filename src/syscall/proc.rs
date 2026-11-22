@@ -1,6 +1,6 @@
 use alloc::{string::String, sync::Arc, vec::Vec};
 
-use crate::{lock::crit_sec::CriticalGuard, mm::{self, VirtAddr, virtual_area::{self, AddressSpace, VirtualArea}}, smp::CpuInfo, syscall::Errno, task::{WaitError, scheduler::yield_task, wait_anychildproc, wait_process}, vfs};
+use crate::{lock::crit_sec::CriticalGuard, mm::{self, VirtAddr, virtual_area::{self, AddressSpace, VirtualArea}}, smp::CpuInfo, syscall::Errno, task::{WaitError, exit_process, scheduler::yield_task, wait_anychildproc, wait_process}, vfs};
 
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy)]
@@ -73,6 +73,37 @@ pub fn sys_wait4(pid: isize, status: &mut u32, options: i32, _usage: &mut Rusage
             }
         }
     }
+}
+
+pub fn sys_arch_prctl(code: i32, base: VirtAddr) -> Result<Option<u64>, Errno> {
+    const ARCH_SET_FS: i32 = 0x1002;
+    const ARCH_GET_FS: i32 = 0x1003;
+
+    let current_thread = CriticalGuard::with(|| CpuInfo::get_current().current_thread.as_ref().unwrap().clone());
+
+    match code {
+        ARCH_SET_FS => {
+            current_thread.set_fs(base.0);
+            CriticalGuard::with(|| CpuInfo::get_current().set_fs_base(base.0));
+            Ok(None)
+        },
+
+        ARCH_GET_FS => {
+            Ok(Some(current_thread.get_fs()))
+        }
+
+        _ => Err(Errno::EINVAL)
+    }
+}
+
+pub fn sys_set_tid_address(_addr: VirtAddr) -> Result<usize, Errno>{
+    Ok(
+        CriticalGuard::with(|| CpuInfo::get_current().current_thread.as_ref().unwrap().tid)
+    )
+}
+
+pub fn sys_exit_group(code: i32) -> ! {
+    exit_process(code);
 }
 
 pub fn sys_fork(frame: &crate::TrapFrame) -> Result<usize, Errno> {

@@ -6,6 +6,7 @@
 #include <cpu/apic/lapic.h>
 #include <cpu/gdt.h>
 #include <cpu/idt.h>
+#include <cpu/sse.h>
 
 #include <mm/rust_interface.h>
 
@@ -65,6 +66,7 @@ void continue_boot_ap_core()
 void boot_ap_core(struct limine_mp_info *core)
 {
     GDT_init_early();
+    enable_sse();
     IDT_init();
 
     uint64_t pdbr = MEM_get_kernel_addresspace();

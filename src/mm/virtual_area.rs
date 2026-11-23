@@ -145,7 +145,8 @@ impl AddressSpace {
 
         self.areas.insert(index, area);
 
-        paging::alloc_pages_low(self.pml4, area.start, area.pages, VirtualArea::to_paging_flags(area.flags)).is_ok()
+        paging::alloc_pages_low(self.pml4, area.start, area.pages, VirtualArea::to_paging_flags(area.flags)).expect("virtual_are insert failed !!");
+        true
     }
 
     pub fn remove(&mut self, addr: VirtAddr) -> Option<VirtualArea> {

@@ -158,6 +158,7 @@ static SYSCALL_TABLE: [Option<SyscallFn>; NUM_SYSCALLS] = {
     table[158] = Some(arch_prctl);
     table[218] = Some(set_tid_address);
     table[231] = Some(exit_group);
+    table[39] = Some(getpid);
 
     table
 };
@@ -193,7 +194,7 @@ fn copy_from_user(dst: *mut u8, src_user: u64, len: usize) -> Result<(), Errno> 
     }
 
     let mut validated_len = 0u64;
-    while (validated_len as usize) < len {
+    while (validated_len as usize) <= len {
         let ptr = src_user + validated_len;
         let page = ptr & !(0xFFF);
         let offset = ptr & 0xFFF;
@@ -226,7 +227,7 @@ fn copy_to_user(dest_user: u64, src: *const u8, len: usize) -> Result<(), Errno>
     }
 
     let mut validated_len = 0u64;
-    while (validated_len as usize) < len {
+    while (validated_len as usize) <= len {
         let ptr = dest_user + validated_len;
         let page = ptr & !(0xFFF);
         let offset = ptr & 0xFFF;
@@ -340,26 +341,11 @@ fn close(frame: &mut TrapFrame) {
 fn read(frame: &mut TrapFrame) {
 
     let fd = frame.rdi as usize;
+    let user_buffer = frame.rsi;
     let count = (frame.rdx as usize).min(MAX_RW_COUNT);
 
-    let mut buffer = {
-        let mut buffer:Vec<u8> = Vec::new();
-        if let Some(_) = buffer.try_reserve(count).err() {
-            return_errno!(frame, Errno::ENOMEM)
-        };
-        buffer.resize(count, 0);
-
-        buffer
-    };
-
-    match sys_read(fd, &mut buffer) {
-        Ok(ret) => {
-            if let Some(e) = copy_to_user(frame.rsi, buffer.as_mut_ptr(), ret).err() {
-                return_errno!(frame, e)
-            }
-
-            frame.rax = ret as u64
-        },
+    match sys_read(fd, user_buffer, count) {
+        Ok(ret) => frame.rax = ret as u64,
         Err(e) => frame.rax = e.to_ret() as u64,
     }
 }
@@ -478,6 +464,10 @@ fn wait4(frame: &mut TrapFrame) {
 
         Err(e) => frame.rax = e.to_ret() as u64
     }
+}
+
+fn getpid(frame: &mut TrapFrame) {
+    frame.rax = CriticalGuard::with(|| CpuInfo::get_current().current_thread.as_ref().unwrap()).process.pid as u64;
 }
 
 fn fork(frame: &mut TrapFrame) {

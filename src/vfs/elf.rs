@@ -61,7 +61,15 @@ impl From<VfsError> for ElfError {
     }
 }
 
-pub fn load_in(addr_space: &mut AddressSpace, file: Arc<dyn Vnode>) -> Result<VirtAddr, ElfError>{
+#[derive(Clone, Copy)]
+pub struct LoadedElf {
+    pub entry: VirtAddr,
+    pub phdr_vaddr: VirtAddr,
+    pub phent: u64,
+    pub phnum: u64,
+}
+
+pub fn load_in(addr_space: &mut AddressSpace, file: Arc<dyn Vnode>) -> Result<LoadedElf, ElfError>{
     let header = {
         let mut header = Elf64_Ehdr::default();
 
@@ -125,8 +133,25 @@ pub fn load_in(addr_space: &mut AddressSpace, file: Arc<dyn Vnode>) -> Result<Vi
         program_headers
     };
 
+    // check if there is an explicit PT_PHDR segment (p_type == 6)
+    let mut phdr_vaddr: Option<u64> = None;
+    for pheader in &program_headers {
+        if pheader.p_type == 6 {
+            phdr_vaddr = Some(pheader.p_vaddr);
+            break;
+        }
+    }
+
     // PT_LOAD only
     for pheader in program_headers.iter().filter(|h| h.p_type == 1) {
+        if phdr_vaddr.is_none()
+            && header.e_phoff >= pheader.p_offset
+            && header.e_phoff < pheader.p_offset + pheader.p_filesz
+        {
+            // if thre is no PT_PHDR segment then deduct it from the loaded segment if the offset is in the segment
+            phdr_vaddr = Some(pheader.p_vaddr + (header.e_phoff - pheader.p_offset));
+        }
+
         let start = VirtAddr(pheader.p_vaddr & !0xFFF);
         let pages = ((pheader.p_vaddr & 0xFFF) + pheader.p_memsz).div_ceil(0x1000);
 
@@ -179,5 +204,12 @@ pub fn load_in(addr_space: &mut AddressSpace, file: Arc<dyn Vnode>) -> Result<Vi
         return Err(ElfError::InvalidHeader);
     }
 
-    Ok(VirtAddr(header.e_entry))
+    let loaded = LoadedElf {
+        entry: VirtAddr(header.e_entry),
+        phdr_vaddr: VirtAddr(phdr_vaddr.ok_or(ElfError::InvalidProgramHeader)?),
+        phent: header.e_phentsize as u64,
+        phnum: header.e_phnum as u64,
+    };
+
+    Ok(loaded)
 }

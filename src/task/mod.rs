@@ -290,6 +290,7 @@ pub struct Thread {
     fs_base: AtomicU64,
     sse_state: SSEState,
     entry_point: VirtAddr,
+    // dont forget when adding new entries to check the derive_in method
 }
 
 impl Thread {
@@ -335,6 +336,15 @@ impl Thread {
             sse_state: SSEState::new(),
             entry_point
         })
+    }
+
+    pub fn derive_in(&self, new_process: Arc<Process>, entry_point: VirtAddr, user_frame: Option<crate::TrapFrame>, id: TID) -> Result<Self, TaskError> {
+        let mut new = Self::new(entry_point, user_frame, new_process, id)?;
+
+        new.set_fs(self.get_fs());
+        new.sse_state.data.copy_from_slice(&self.sse_state.data[..]);
+
+        Ok(new)
     }
 
     pub fn get_state(&self) -> ThreadState {

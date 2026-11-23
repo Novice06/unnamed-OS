@@ -1,6 +1,6 @@
 use alloc::{string::String, sync::Arc, vec::Vec};
 
-use crate::{lock::crit_sec::CriticalGuard, mm::{self, VirtAddr, virtual_area::{self, AddressSpace, VirtualArea}}, smp::CpuInfo, syscall::Errno, task::{WaitError, exit_process, scheduler::yield_task, wait_anychildproc, wait_process}, vfs};
+use crate::{lock::{Condom, crit_sec::CriticalGuard}, mm::{self, VirtAddr, virtual_area::{self, AddressSpace, VirtualArea}}, smp::CpuInfo, syscall::Errno, task::{WaitError, exit_process, scheduler::yield_task, wait_anychildproc, wait_process}, vfs};
 
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy)]
@@ -45,7 +45,7 @@ pub fn sys_wait4(pid: isize, status: &mut u32, options: i32, _usage: &mut Rusage
         return Err(Errno::EINVAL);
     }
 
-    if !((options & WUNTRACED) != 0 || (options & WCONTINUED) != 0 || (options & WNOHANG) != 0) {
+    if !((options & WUNTRACED) != 0 || (options & WCONTINUED) != 0 || (options & WNOHANG) != 0 || options == 0) {
         return Err(Errno::EINVAL);
     }
 
@@ -126,7 +126,7 @@ pub fn sys_fork(frame: &crate::TrapFrame) -> Result<usize, Errno> {
         let tid = crate::task::alloc_tid();
 
         crate::task::TASK_MANAGER.add_thread(
-            crate::task::Thread::new(VirtAddr(0), Some(new_frame), child_proc.clone(), tid)?, 
+            current_thread.derive_in(child_proc.clone(), VirtAddr(0), Some(new_frame), tid)?,
             tid
         )
     };
@@ -140,7 +140,7 @@ pub fn sys_fork(frame: &crate::TrapFrame) -> Result<usize, Errno> {
     Ok(child_pid)
 }
 
-fn build_new_stack(path: &str, VirtAddr(stack_top): VirtAddr, VirtAddr(entry): VirtAddr, argv: Vec<String>, envp: Vec<String>) -> u64 {
+fn build_new_stack(path: &str, VirtAddr(stack_top): VirtAddr, elf: vfs::elf::LoadedElf, argv: Vec<String>, envp: Vec<String>) -> u64 {
     let mut rsp = stack_top;
 
     let mut argv_ptrs = Vec::new();
@@ -214,12 +214,12 @@ fn build_new_stack(path: &str, VirtAddr(stack_top): VirtAddr, VirtAddr(entry): V
 
     // now copying the auxv table
     let auxv = [
-        (3, 0),              // AT_PHDR, 0
-        (4, 0),              // AT_PHENT, 0
-        (5, 0),              // AT_PHNUM, 0
+        (3, elf.phdr_vaddr.0),              // AT_PHDR, 0
+        (4, elf.phent),              // AT_PHENT, 0
+        (5, elf.phnum),              // AT_PHNUM, 0
         (6, 4096),           // AT_PAGESZ, 4096
         (7, 0),              // AT_BASE, 0
-        (9, entry),          // AT_ENTRY
+        (9, elf.entry.0),          // AT_ENTRY
         (11, 0),             // AT_UID
         (12, 0),             // AT_EUID
         (13, 0),             // AT_GID
@@ -289,10 +289,20 @@ pub fn sys_execve(path: String, argv: Vec<String>, envp: Vec<String>) -> Result<
         if file.vtype() != vfs::VnodeType::VREG { return Err(Errno::EACCES); }
 
         // temporary address space in case the elf loader fail
-        let tmp_cr3 = mm::physical::PHYSICAL_MEMORY_ALLOCATOR.lock().alloc_page().ok_or(Errno::ENOMEM)?;
-        let mut tmp_addr_space = AddressSpace::new(VirtAddr(tmp_cr3.0 + mm::get_hhdm()));
+        let tmp_cr3 = {
+            let frame = mm::physical::PHYSICAL_MEMORY_ALLOCATOR.lock().alloc_page().ok_or(Errno::ENOMEM)?;
+            Condom::put(frame, |frame| mm::physical::PHYSICAL_MEMORY_ALLOCATOR.lock().free_page(frame))
+        };
+        let mut tmp_addr_space = {
+            let virt = tmp_cr3.0 + mm::get_hhdm();
+            unsafe {
+                core::slice::from_raw_parts_mut(virt as *mut u8, 0x1000).fill(0);
+            }
+            let addr_space = AddressSpace::new(VirtAddr(virt));
+            Condom::put(addr_space, |mut space| space.clean())
+        };
 
-        let entry_point = match vfs::elf::load_in(&mut tmp_addr_space, file) {
+        let elf = match vfs::elf::load_in(&mut tmp_addr_space, file) {
             Ok(entry) => entry,
             Err(vfs::elf::ElfError::ReadError(v)) => return Err(Errno::from(v)),
             Err(_) => return Err(Errno::ENOEXEC),
@@ -309,12 +319,8 @@ pub fn sys_execve(path: String, argv: Vec<String>, envp: Vec<String>) -> Result<
         current_process.close_cloexec_res();
         AddressSpace::clone(&tmp_addr_space, &mut *current_process.addr_space.lock());
 
-        // nicely cleaning
-        tmp_addr_space.clean();
-        mm::physical::PHYSICAL_MEMORY_ALLOCATOR.lock().free_page(tmp_cr3);
-
-        let stack_top = build_new_stack(&path, stack_area.end(), entry_point, argv, envp);
-        (entry_point, VirtAddr(stack_top))
+        let stack_top = build_new_stack(&path, stack_area.end(), elf, argv, envp);
+        (elf.entry, VirtAddr(stack_top))
     };
 
     let frame = crate::TrapFrame::user_frame(stack_top, entry_point);

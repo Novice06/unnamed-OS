@@ -23,6 +23,10 @@ pub fn sys_openat(dirfd: usize, path: &str, flags: u32, mode: u32) -> Result<usi
         return Err(Errno::EINVAL);
     }
 
+    if path.is_empty() {
+        return Err(Errno::ENOENT);
+    }
+
     let current_process = CriticalGuard::with(|| CpuInfo::get_current().current_thread.as_ref().unwrap().process.clone());
 
     let (parent, node_name) = {
@@ -69,6 +73,11 @@ pub fn sys_openat(dirfd: usize, path: &str, flags: u32, mode: u32) -> Result<usi
     }
 
     let access_mode = flags & O_ACCMODE;
+
+    if node.vtype() == VnodeType::VDIR && (access_mode == O_WRONLY || access_mode == O_RDWR) {
+        return Err(Errno::EISDIR);
+    }
+
     if flags & O_TRUNC != 0
         && (access_mode == O_WRONLY || access_mode == O_RDWR)
     {
@@ -103,7 +112,7 @@ pub fn sys_close(fd: usize) -> Result<(), Errno> {
     Ok(())
 }
 
-pub fn sys_read(fd: usize, buffer: &mut[u8]) -> Result<usize, Errno> {
+pub fn sys_read(fd: usize, user_buffer: u64, count: usize) -> Result<usize, Errno> {
     let current_process = CriticalGuard::with(|| CpuInfo::get_current().current_thread.as_ref().unwrap().process.clone());
 
     let file = {
@@ -121,9 +130,38 @@ pub fn sys_read(fd: usize, buffer: &mut[u8]) -> Result<usize, Errno> {
         return Err(Errno::EBADF);
     }
 
-    let mut offset = file.offset.lock();
-    let read = file.node.read(*offset, buffer)?;
-    *offset += read as u64;
+    let mut buffer = {
+        let mut buffer:Vec<u8> = Vec::new();
+        if let Some(_) = buffer.try_reserve(count).err() {
+            return Err(Errno::ENOMEM);
+        };
+        buffer.resize(count, 0);
+
+        buffer
+    };
+
+    let read = match file.node.vtype() {
+        VnodeType::VREG | VnodeType::VBLCK => {
+            let mut offset = file.offset.lock();
+
+            let read = file.node.read(*offset, &mut buffer)?;
+            super::copy_to_user(user_buffer, buffer.as_mut_ptr(), read)?;
+
+            *offset += read as u64;
+
+            read
+        }
+
+        // same but no offset used
+        VnodeType::VCHAR => {
+            let read = file.node.read(0, &mut buffer)?;
+            super::copy_to_user(user_buffer, buffer.as_mut_ptr(), read)?;
+
+            read
+        }
+
+        VnodeType::VDIR => return Err(Errno::EISDIR)
+    };
 
     Ok(read)
 }
@@ -147,15 +185,36 @@ pub fn sys_write(fd: usize, buffer: &[u8]) -> Result<usize, Errno> {
     }
 
     if file.flags & O_APPEND != 0 {
-        let mut offset = file.offset.lock();
-        let file_size = file.node.append(buffer)?;
-        *offset = file_size;
+        let write = match file.node.vtype() {
+            VnodeType::VREG | VnodeType::VBLCK => {
+                let mut offset = file.offset.lock();
+                *offset = file.node.append(buffer)?;
 
-        Ok(buffer.len())
+                buffer.len()
+            }
+
+            // same but no offset used
+            VnodeType::VCHAR => file.node.write(0, buffer)? as usize,
+
+            VnodeType::VDIR => return Err(Errno::EISDIR)
+        };
+
+        Ok(write)
     } else {
-        let mut offset = file.offset.lock();
-        let write = file.node.write(*offset, buffer)?;
-        *offset += write as u64;
+        let write = match file.node.vtype() {
+            VnodeType::VREG | VnodeType::VBLCK => {
+                let mut offset = file.offset.lock();
+                let write = file.node.write(*offset, buffer)?;
+                *offset += write as u64;
+
+                write
+            }
+
+            // same but no offset used
+            VnodeType::VCHAR => file.node.write(0, buffer)?,
+
+            VnodeType::VDIR => return Err(Errno::EISDIR)
+        };
 
         Ok(write)
     }
@@ -180,26 +239,64 @@ pub fn sys_writev(fd: usize, buffers: Vec<Vec<u8>>) -> Result<usize, Errno> {
     }
 
     if file.flags & O_APPEND != 0 {
-        let mut offset = file.offset.lock();
+        let write = match file.node.vtype() {
+            VnodeType::VREG | VnodeType::VBLCK => {
+                let mut offset = file.offset.lock();
 
-        let mut file_size = 0;
-        let mut write = 0;
-        for buffer in buffers {
-            file_size = file.node.append(&buffer)?;
-            write += buffer.len();
-        }
+                let mut file_size = 0;
+                let mut write = 0;
+                for buffer in buffers {
+                    file_size = file.node.append(&buffer)?;
+                    write += buffer.len();
+                }
 
-        *offset = file_size;
+                *offset = file_size;
+
+                write
+            }
+
+            // same but no offset used
+            VnodeType::VCHAR => {
+                let mut write = 0;
+                for buffer in buffers {
+                    write += file.node.write(0, &buffer)? as usize;
+                }
+
+                write
+            },
+
+            VnodeType::VDIR => return Err(Errno::EISDIR)
+        };
+
         Ok(write)
     } else {
-        let mut offset = file.offset.lock();
+        let write = match file.node.vtype() {
+            VnodeType::VREG | VnodeType::VBLCK => {
+                let mut offset = file.offset.lock();
 
-        let mut write = 0;
-        for buffer in buffers {
-            write += file.node.write(*offset, &buffer)?;    
-        }
+                let mut write = 0;
+                for buffer in buffers {
+                    write += file.node.write(*offset, &buffer)?;    
+                }
 
-        *offset += write as u64;
+                *offset += write as u64;
+
+                write
+            }
+
+            // same but no offset used
+            VnodeType::VCHAR => {
+                let mut write = 0;
+                for buffer in buffers {
+                    write += file.node.write(0,& buffer)? as usize;
+                }
+
+                write
+            },
+
+            VnodeType::VDIR => return Err(Errno::EISDIR)
+        };
+
         Ok(write)
     }
 }

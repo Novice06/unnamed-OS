@@ -18,6 +18,7 @@ pub enum VfsError {
     InvalidName,
     Busy,
     NotSupported,
+    BrokenPipe
 }
  
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -25,7 +26,8 @@ pub enum VnodeType {
     VREG,
     VDIR,
     VCHAR,
-    VBLCK
+    VBLCK,
+    VPIPE,
 }
 
 pub trait Vnode {

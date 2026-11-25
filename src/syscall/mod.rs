@@ -3,7 +3,7 @@ pub mod proc;
 
 use alloc::{string::String, vec::Vec};
 
-use crate::{TrapFrame, disable_interrupts, enable_interrupts, lock::crit_sec::CriticalGuard, mm::{ VirtAddr, paging, virtual_area}, smp::CpuInfo, syscall::{fs::{sys_close, sys_openat, sys_read, sys_write, sys_writev}, proc::{sys_arch_prctl, sys_execve, sys_exit_group, sys_fork, sys_set_tid_address, sys_wait4}}, task::TaskError, vfs::VfsError};
+use crate::{TrapFrame, disable_interrupts, enable_interrupts, lock::crit_sec::CriticalGuard, mm::{ VirtAddr, paging, virtual_area}, smp::CpuInfo, syscall::{fs::{sys_close, sys_openat, sys_pipe, sys_read, sys_write, sys_writev}, proc::{sys_arch_prctl, sys_execve, sys_exit_group, sys_fork, sys_set_tid_address, sys_wait4}}, task::TaskError, vfs::VfsError};
 
 #[repr(i32)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -100,6 +100,7 @@ impl From<VfsError> for Errno {
             VfsError::InvalidName => Errno::EINVAL,
             VfsError::Busy => Errno::EBUSY,
             VfsError::NotSupported => Errno::ENOSYS,
+            VfsError::BrokenPipe => Errno::EPIPE,
         }
     }
 }
@@ -123,6 +124,7 @@ pub extern "C" fn SYSCALL_dispatcher(frame: *mut TrapFrame) {
     if let Some(Some(sys)) = SYSCALL_TABLE.get(frame.rax as usize) {
         sys(frame);
     } else {
+        // crate::warn!("unimplemented syscall {}", frame.rax);
         frame.rax = Errno::ENOSYS.to_ret() as u64;
     };
 
@@ -159,6 +161,8 @@ static SYSCALL_TABLE: [Option<SyscallFn>; NUM_SYSCALLS] = {
     table[218] = Some(set_tid_address);
     table[231] = Some(exit_group);
     table[39] = Some(getpid);
+    table[22] = Some(pipe);
+    table[293] = Some(pipe2);
 
     table
 };
@@ -438,6 +442,40 @@ fn writev(frame: &mut TrapFrame) {
         Err(e) => frame.rax = e.to_ret() as u64,
     }
 
+}
+
+fn pipe(frame: &mut TrapFrame) {
+    match sys_pipe(0) {
+        Ok((read, write)) => {
+            let fds = [read as i32, write as i32];
+            if let Some(e) = copy_to_user(frame.rdi, fds.as_ptr() as *const u8, fds.len() * core::mem::size_of::<i32>()).err() {
+                let _ = sys_close(read);
+                let _ = sys_close(write);
+                return_errno!(frame, e)
+            }
+        },
+
+        Err(e) => return_errno!(frame, e)
+    }
+
+    frame.rax = 0;
+}
+
+fn pipe2(frame: &mut TrapFrame) {
+    match sys_pipe(frame.rsi as u32) {
+        Ok((read, write)) => {
+            let fds = [read as i32, write as i32];
+            if let Some(e) = copy_to_user(frame.rdi, fds.as_ptr() as *const u8, fds.len() * core::mem::size_of::<i32>()).err() {
+                let _ = sys_close(read);
+                let _ = sys_close(write);
+                return_errno!(frame, e)
+            }
+        },
+
+        Err(e) => return_errno!(frame, e)
+    }
+
+    frame.rax = 0;
 }
 
 fn wait4(frame: &mut TrapFrame) {

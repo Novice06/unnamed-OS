@@ -1,6 +1,6 @@
 use alloc::{sync::Arc, vec::Vec};
 
-use crate::{CpuInfo, lock::crit_sec::CriticalGuard, syscall::Errno, task::{FileDescriptor, OpenFile}, vfs::{self, VfsError, VnodeType}};
+use crate::{CpuInfo, ipc::pipe, lock::crit_sec::CriticalGuard, syscall::Errno, task::{FileDescriptor, OpenFile}, vfs::{self, VfsError, VnodeType}};
 
 pub const AT_FDCWD: i32 = -100; // "relative to the current directory"
 
@@ -84,7 +84,7 @@ pub fn sys_openat(dirfd: usize, path: &str, flags: u32, mode: u32) -> Result<usi
         node.trunc()?;
     }
 
-    let opened = OpenFile::new(node, flags & (O_ACCMODE | O_APPEND)); // if append never write anywhere except the end probably by using a kind of built in vnode fucntion append
+    let opened = OpenFile::new(node, access_mode, flags & !(O_ACCMODE)); // if append never write anywhere except the end probably by using a kind of built in vnode fucntion append
 
     current_process.alloc_resource(FileDescriptor {
         file: Arc::new(opened),
@@ -125,8 +125,7 @@ pub fn sys_read(fd: usize, user_buffer: u64, count: usize) -> Result<usize, Errn
         resource.file.clone()
     };
 
-    let access_mode = file.flags & O_ACCMODE;
-    if !(access_mode == O_RDONLY || access_mode == O_RDWR) {
+    if !(file.access_mode == O_RDONLY || file.access_mode == O_RDWR) {
         return Err(Errno::EBADF);
     }
 
@@ -153,7 +152,7 @@ pub fn sys_read(fd: usize, user_buffer: u64, count: usize) -> Result<usize, Errn
         }
 
         // same but no offset used
-        VnodeType::VCHAR => {
+        VnodeType::VCHAR | VnodeType::VPIPE => {
             let read = file.node.read(0, &mut buffer)?;
             super::copy_to_user(user_buffer, buffer.as_mut_ptr(), read)?;
 
@@ -179,8 +178,7 @@ pub fn sys_write(fd: usize, buffer: &[u8]) -> Result<usize, Errno> {
         resource.file.clone()
     };
 
-    let access_mode = file.flags & O_ACCMODE;
-    if !(access_mode == O_WRONLY || access_mode == O_RDWR) {
+    if !(file.access_mode == O_WRONLY || file.access_mode == O_RDWR) {
         return Err(Errno::EBADF);
     }
 
@@ -194,7 +192,7 @@ pub fn sys_write(fd: usize, buffer: &[u8]) -> Result<usize, Errno> {
             }
 
             // same but no offset used
-            VnodeType::VCHAR => file.node.write(0, buffer)? as usize,
+            VnodeType::VCHAR | VnodeType::VPIPE => file.node.write(0, buffer)? as usize,
 
             VnodeType::VDIR => return Err(Errno::EISDIR)
         };
@@ -211,7 +209,7 @@ pub fn sys_write(fd: usize, buffer: &[u8]) -> Result<usize, Errno> {
             }
 
             // same but no offset used
-            VnodeType::VCHAR => file.node.write(0, buffer)?,
+            VnodeType::VCHAR | VnodeType::VPIPE => file.node.write(0, buffer)?,
 
             VnodeType::VDIR => return Err(Errno::EISDIR)
         };
@@ -233,8 +231,7 @@ pub fn sys_writev(fd: usize, buffers: Vec<Vec<u8>>) -> Result<usize, Errno> {
         resource.file.clone()
     };
 
-    let access_mode = file.flags & O_ACCMODE;
-    if !(access_mode == O_WRONLY || access_mode == O_RDWR) {
+    if !(file.access_mode == O_WRONLY || file.access_mode == O_RDWR) {
         return Err(Errno::EBADF);
     }
 
@@ -256,7 +253,7 @@ pub fn sys_writev(fd: usize, buffers: Vec<Vec<u8>>) -> Result<usize, Errno> {
             }
 
             // same but no offset used
-            VnodeType::VCHAR => {
+            VnodeType::VCHAR | VnodeType::VPIPE => {
                 let mut write = 0;
                 for buffer in buffers {
                     write += file.node.write(0, &buffer)? as usize;
@@ -285,7 +282,7 @@ pub fn sys_writev(fd: usize, buffers: Vec<Vec<u8>>) -> Result<usize, Errno> {
             }
 
             // same but no offset used
-            VnodeType::VCHAR => {
+            VnodeType::VCHAR | VnodeType::VPIPE => {
                 let mut write = 0;
                 for buffer in buffers {
                     write += file.node.write(0,& buffer)? as usize;
@@ -299,4 +296,37 @@ pub fn sys_writev(fd: usize, buffers: Vec<Vec<u8>>) -> Result<usize, Errno> {
 
         Ok(write)
     }
+}
+
+pub fn sys_pipe(flags: u32) -> Result<(usize, usize), Errno> {
+    let current_process = CriticalGuard::with(|| CpuInfo::get_current().current_thread.as_ref().unwrap().process.clone());
+    let (reader, writer) = pipe::create();
+
+    let mut resource = current_process.resources.lock();
+
+    let mut free_fd = resource.
+    iter()
+    .enumerate()
+    .filter(|(_, r)| r.is_none())
+    .map(|(i, _)| i);
+
+    let (Some(read), Some(write)) = (free_fd.next(), free_fd.next()) else {
+        return Err(Errno::EMFILE);
+    };
+
+    resource[read] = Some(
+        FileDescriptor { 
+            file: Arc::new(OpenFile::new(Arc::new(reader),  O_RDONLY, flags & !(O_ACCMODE))), 
+            is_cloexec: (flags & O_CLOEXEC) != 0, 
+        }
+    );
+
+    resource[write] = Some(
+        FileDescriptor { 
+            file: Arc::new(OpenFile::new(Arc::new(writer),  O_WRONLY, flags & !(O_ACCMODE))), 
+            is_cloexec: (flags & O_CLOEXEC) != 0, 
+        }
+    );
+
+    Ok((read, write))
 }

@@ -23,13 +23,14 @@ pub enum TaskError {
 
 pub struct OpenFile {
     pub node: Arc<dyn Vnode>,
+    pub access_mode: u32,
     pub flags: u32,
     pub offset: Mutex<u64>,
 }
 
 impl OpenFile {
-    pub fn new(node: Arc<dyn Vnode>, flags: u32) -> Self {
-        Self { node, flags, offset: Mutex::new(0) }
+    pub fn new(node: Arc<dyn Vnode>, access_mode: u32, flags: u32) -> Self {
+        Self { node, access_mode, flags, offset: Mutex::new(0) }
     }
 }
 
@@ -196,6 +197,13 @@ impl Process {
 
         resources[index] = Some(res);
         Some(index)
+    }
+
+    fn close_resource(&self) {
+        let mut resources = self.resources.lock();
+        for resource in resources.iter_mut() {
+            resource.take();
+        }
     }
 
     pub fn close_cloexec_res(&self) {
@@ -577,6 +585,8 @@ pub fn exit_thread(code: i32) -> ! {
             }
 
             init.children.lock().extend(children);
+
+            this_process.close_resource();
 
             let status = this_process.status.load(Ordering::Relaxed);
             this_process.status.store(((code as u32 & 0xff) << 8) | status, Ordering::Relaxed);

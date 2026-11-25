@@ -11,6 +11,7 @@ pub mod task;
 pub mod vfs;
 pub mod syscall;
 pub mod drivers;
+pub mod ipc;
 
 use core::panic::PanicInfo;
 

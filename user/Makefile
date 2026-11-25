@@ -42,6 +42,7 @@ $(MUSL_CC):
 userspace: toolchain
 	@mkdir -p $(OUTPUT_BIN)
 	$(MUSL_CC) $(USER_CFLAGS) init.c -o $(OUTPUT_BIN)/init
+	$(MUSL_CC) $(USER_CFLAGS) test.c -o $(OUTPUT_BIN)/test
 
 clean:
 	rm -rf $(OUTPUT_BIN)

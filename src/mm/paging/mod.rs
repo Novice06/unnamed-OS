@@ -1,5 +1,4 @@
 use core::{panic, sync::atomic::{Ordering::{self, Relaxed}}};
-use alloc::vec::Vec;
 
 use crate::{kernel_end, kernel_start, kernel_write_allowed_start, lock::spinlock::SpinLockIrqSave, mm::{HHDM_OFFSET, LimineExecutableAddr, PhyAddr, VirtAddr, physical}, smp};
 use super::{LimineMemMapEntry};
@@ -176,19 +175,15 @@ fn map_pages(pml4_addr: VirtAddr, VirtAddr(virt): VirtAddr, PhyAddr(phys): PhyAd
     }
 }
 
-fn unmap_pages(pml4_addr: VirtAddr, VirtAddr(virt): VirtAddr, num_pages: u64) -> Vec<PhyAddr> {
-    
-    // ironically this function need a heap since its uses a vector to collect frames
-    // therefore one should use this function for a very specific reason
-    // TODO: impl a similar function that directly deallocate physical frame
-
+fn unmap_pages(pml4_addr: VirtAddr, VirtAddr(virt): VirtAddr, frames: &mut [PhyAddr]) -> usize {
     // we suppose the caller has the lock
 
-    let mut pml4 = PageEntry::from(pml4_addr);
-    let mut frames = Vec::new();
+    let mut frames_count = 0;
 
-    for i in 0..num_pages {
-        let addr = virt + 0x1000 * i;
+    let mut pml4 = PageEntry::from(pml4_addr);
+
+    for i in 0..frames.len() {
+        let addr: u64 = virt + 0x1000 * i as u64;
         
         let pml4_idx = ((addr >> 39) & 0x1FF) as usize;
         let pml3_idx = ((addr >> 30) & 0x1FF) as usize;
@@ -200,7 +195,8 @@ fn unmap_pages(pml4_addr: VirtAddr, VirtAddr(virt): VirtAddr, num_pages: u64) ->
         let Some(mut pml1) = pml2.from_previous_level(pml2_idx, false) else { continue; };
 
         if let Some(phys) = pml1.get_physical(pml1_idx) {
-            frames.push(phys);
+            frames[frames_count] = phys;
+            frames_count += 1;
             pml1.clear_entry(pml1_idx);
         }
 
@@ -210,7 +206,7 @@ fn unmap_pages(pml4_addr: VirtAddr, VirtAddr(virt): VirtAddr, num_pages: u64) ->
         let _ = pml2.destroy(&mut pml3, pml3_idx);
     }
 
-    frames
+    frames_count
 }
 
 pub fn get_physical(pml4_addr: VirtAddr, addr: VirtAddr) -> Option<PhyAddr> {
@@ -263,21 +259,31 @@ pub fn alloc_pages(pml4_addr: VirtAddr, VirtAddr(virt): VirtAddr, num_pages: u64
     }
 }
 
-pub fn dealloc_pages(pml4_addr: VirtAddr, virt: VirtAddr, num_pages: u64) {
+pub fn dealloc_pages(pml4_addr: VirtAddr, virt: VirtAddr, num_pages: usize) {
+
+    let mut frames = [PhyAddr(0); 256]; // can only dealloc up to 1Mb at a time
+    let mut deallocated = 0;
     
-    let frames = {
-        let _guard = PAGING_LOCK.lock();
-        unmap_pages(pml4_addr, virt, num_pages)
-    };
+    while num_pages > deallocated {
+        let chunk_pages = frames.len().min(num_pages - deallocated);
+        let current_virt = VirtAddr(virt.0 + deallocated as u64 * 0x1000);
 
-    // sending an ipi to invalidate tlb including my self to prevent a case where before sending the ipi
-    // we get preempted and another cpu send the ipi and then again we get preempted (for some reason idk)
-    // so the cpu that sent the ipi never gets to tlb flush !
-    crate::smp::send_broadcast_ipi(smp::IpiAction::TlbFlush { start: virt, pages: num_pages as usize }, true);
+        let frames_count = {
+            let _guard = PAGING_LOCK.lock();
+            unmap_pages(pml4_addr, current_virt, &mut frames[..chunk_pages])
+        };
 
-    let mut pmm = super::physical::PHYSICAL_MEMORY_ALLOCATOR.lock();
-    for frame in frames {
-        pmm.free_page(frame);
+        // sending an ipi to invalidate tlb including my self to prevent a case where before sending the ipi
+        // we get preempted and another cpu send the ipi and then again we get preempted (for some reason idk)
+        // so the cpu that sent the ipi never gets to tlb flush !
+        crate::smp::send_broadcast_ipi(smp::IpiAction::TlbFlush { start: current_virt, pages: chunk_pages }, true);
+
+        let mut pmm = super::physical::PHYSICAL_MEMORY_ALLOCATOR.lock();
+        for frame in &frames[..frames_count] {
+            pmm.free_page(*frame);
+        }
+
+        deallocated += chunk_pages;
     }
 }
 
@@ -316,20 +322,33 @@ pub fn alloc_pages_low(pml4_addr: VirtAddr, VirtAddr(virt): VirtAddr, num_pages:
 }
 
 /// same as `alloc_pages_low`
-pub fn dealloc_pages_low(pml4_addr: VirtAddr, virt: VirtAddr, num_pages: u64) -> Result<(), ()> {
+pub fn dealloc_pages_low(pml4_addr: VirtAddr, virt: VirtAddr, num_pages: usize) -> Result<(), ()> {
 
     if (virt.0 >> 47) == 0x1FFFF {
         return Err(());
     }
+
+    let mut frames = [PhyAddr(0); 256]; // can only dealloc up to 1Mb at a time
+    let mut deallocated = 0;
     
-    let frames = unmap_pages(pml4_addr, virt, num_pages);
+    while num_pages > deallocated {
+        let chunk_pages = frames.len().min(num_pages - deallocated);
+        let current_virt = VirtAddr(virt.0 + deallocated as u64 * 0x1000);
 
-    // still dont know about sending an ipi...
-    crate::smp::send_broadcast_ipi(smp::IpiAction::TlbFlush { start: virt, pages: num_pages as usize }, true);
+        let frames_count = {
+            let _guard = PAGING_LOCK.lock();
+            unmap_pages(pml4_addr, current_virt, &mut frames[..chunk_pages])
+        };
 
-    let mut pmm = super::physical::PHYSICAL_MEMORY_ALLOCATOR.lock();
-    for frame in frames {
-        pmm.free_page(frame);
+        // still dont know about sending an ipi here ...
+        crate::smp::send_broadcast_ipi(smp::IpiAction::TlbFlush { start: current_virt, pages: chunk_pages }, true);
+
+        let mut pmm = super::physical::PHYSICAL_MEMORY_ALLOCATOR.lock();
+        for frame in &frames[..frames_count] {
+            pmm.free_page(*frame);
+        }
+
+        deallocated += chunk_pages;
     }
 
     Ok(())
@@ -344,7 +363,7 @@ pub fn alloc_pages_in_pdbr(addr: VirtAddr, num_pages: u64, flags: u8) {
 pub fn dealloc_pages_in_pdbr(virt: VirtAddr, num_pages: u64) {
     let pml4_addr = unsafe { VirtAddr(crate::get_pdbr() + HHDM_OFFSET.load(Relaxed)) };
 
-    dealloc_pages(pml4_addr, virt, num_pages);
+    dealloc_pages(pml4_addr, virt, num_pages as usize);
 }
 
 pub fn init(mem_map_entries: &[LimineMemMapEntry], executable_addr: LimineExecutableAddr) {

@@ -587,6 +587,7 @@ pub fn exit_thread(code: i32) -> ! {
             init.children.lock().extend(children);
 
             this_process.close_resource();
+            this_process.addr_space.lock().clean();
 
             let status = this_process.status.load(Ordering::Relaxed);
             this_process.status.store(((code as u32 & 0xff) << 8) | status, Ordering::Relaxed);

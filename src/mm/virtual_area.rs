@@ -156,14 +156,14 @@ impl AddressSpace {
 
         let removed = self.areas.remove(index);
 
-        paging::dealloc_pages_low(self.pml4, removed.start, removed.pages).ok()?;
+        paging::dealloc_pages_low(self.pml4, removed.start, removed.pages as usize).ok()?;
 
         Some(removed)
     }
 
     pub fn clean(&mut self) {
         while let Some(removed) = self.areas.pop() {
-            let _ = paging::dealloc_pages_low(self.pml4, removed.start, removed.pages);
+            let _ = paging::dealloc_pages_low(self.pml4, removed.start, removed.pages as usize);
         }
     }
 
